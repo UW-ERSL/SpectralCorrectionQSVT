@@ -40,17 +40,14 @@ SIAM 2019; Mang et al., CCIS 2744 (2026); Sunderhauf et al., arXiv:2507.15537.
 import math
 import numpy as np
 from numpy.polynomial.chebyshev import Chebyshev
-import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from matplotlib.lines import Line2D
-import matplotlib.patches as mpatches
 
 
 
 # ==============================================================================
-# CONVENTION NOTES  (read before modifying)
+# CONVENTION NOTES  
 # ==============================================================================
 #
 # pyqsp  signal_operator="Wx"  uses the ROTATION signal unitary:
@@ -1275,44 +1272,8 @@ def plot_hybrid_compare(kappa: float,
     return fig
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# __main__ — generate all figures
-# ══════════════════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    expt = 5
-
-    if (expt == 1): # function approximation profiles
-        kappa   = 10
-        epsilon = 0.2
-        fig = plot_three_methods(kappa=kappa, epsilon=epsilon)
-        plt.show()
-
-    elif (expt == 2): # function approximation errors
-        kappa   = 10
-        epsilon = 0.2
-        fig = plot_three_errors(kappa=kappa, epsilon=epsilon)
-        plt.show()
-
-    elif (expt == 3):
-        kappa = 10
-        epsilon = 0.1
-        K = 3
-        lam = np.array([1/kappa, 0.15, 1])
-        fig = plot_hybrid_compare(kappa=kappa, epsilon=epsilon,
-                                eigenvalues=lam , base='sunderhauf')
-        plt.show()
-
-    elif (expt == 4): #N = 63 1D Poisson, Mang backbone + K=5 correction
-        kappa   = 9.4721
-        epsilon = 0.1
-        lam     = np.array([1/kappa, 0.381966, 0.723607, 1.000000])
-        fig = plot_hybrid_compare(kappa=kappa, epsilon=epsilon,
-                                eigenvalues=lam , base='sunderhauf')
-        plt.show()
-
-    elif (expt == 5): 
-        """
+def print_accuracy_table_1D(m: int = 2, KFactor: float = 0.5,  base: str = 'mang'):
+    """
         degree_accuracy_experiment.py
         ==============================
         Reproduces Table: Degree--accuracy trade-off for Mang vs Hybrid-Mang.
@@ -1321,52 +1282,62 @@ if __name__ == "__main__":
         - corrected eigenvalues (K smallest)
         - all N eigenvalues
         """
-        N  = 4
-        K  = 4
-        h  = 1.0 / (N + 1)
-        k  = np.arange(1, N + 1)
+    N  = 2**m
+    K = int(KFactor * N)
+    h  = 1.0 / (N + 1)
+    k  = np.arange(1, N + 1)
 
-        lam_all = (4.0/h**2) * np.sin(k * np.pi / (2*(N+1)))**2
-        lam_all /= lam_all[-1]
+    lam_all = (4.0/h**2) * np.sin(k * np.pi / (2*(N+1)))**2
+    lam_all /= lam_all[-1]
 
-        kappa = 1.0 / lam_all[0]
-        a     = 1.0 / kappa
-        lam_K = lam_all[:K]
+    kappa = 1.0 / lam_all[0]
+    a     = 1.0 / kappa
+    lam_K = lam_all[:K]
 
-        print(f"N={N}, kappa={kappa:.2f}, K={K}\n")
-
-
-        def eig_residuals(p, eigenvalues):
-            vals = np.abs(eigenvalues * p(eigenvalues) - 1.0)
-            return np.maximum(vals, 1e-16)  # avoid exact zero
+    print(f"N={N}, kappa={kappa:.2f}, K={K}\n")
 
 
-        # ── experiment ────────────────────────────────────────────────────────────────
-        epsilons = [0.1, 0.01, 0.001]
+    def eig_residuals(p, eigenvalues):
+        vals = np.abs(eigenvalues * p(eigenvalues) - 1.0)
+        return np.maximum(vals, 1e-16)  # avoid exact zero
 
-        fmt = f"{'Method':<22} {'eps':>7} {'d':>6}  {'E_eig (K corrected)':>20}  {'E_eig (all N)':>14}"
-        print(fmt)
-        print('-' * len(fmt))
 
-        for eps in epsilons:
-            d0 = MangPolynomial.mindegree(eps, a)
-            p0 = MangPolynomial.poly(d0, a)
+    # ── experiment ────────────────────────────────────────────────────────────────
+    epsilons = [0.1, 0.01, 0.001]
 
-            # hybrid
-            coef_H        = p0.coef.copy()
-            coef_H[1::2] += hybrid_correction(p0, lam_K)
-            p_H           = Chebyshev(coef_H)
+    fmt = f"{'Method':<22} {'eps':>7} {'d':>6}  {'E_eig (K corrected)':>20}  {'E_eig (all N)':>14}"
+    print(fmt)
+    print('-' * len(fmt))
+    cls = BASE_POLYS[base.lower()]
+    for eps in epsilons:
+        d0 = cls.mindegree(eps, a)
+        p0 = cls.poly(d0, a)
 
-            # residuals at corrected vs all eigenvalues
-            r0_K   = np.max(eig_residuals(p0, lam_K))
-            rH_K   = np.max(eig_residuals(p_H, lam_K))
-            r0_all = np.max(eig_residuals(p0, lam_all))
-            rH_all = np.max(eig_residuals(p_H, lam_all))
+        # hybrid
+        coef_H        = p0.coef.copy()
+        coef_H[1::2] += hybrid_correction(p0, lam_K)
+        p_H           = Chebyshev(coef_H)
 
-            eps_str = f"{eps:.0e}" if eps < 0.01 else f"{eps:.3f}"
-            print(f"{'Mang':<22} {eps_str:>7} {d0:>6d}  {r0_K:>20.2e}  {r0_all:>14.2e}")
-            hybrid_label = f"Hybrid-Mang (K={K})"
-            print(f"{hybrid_label:<22} {eps_str:>7} {d0:>6d}  {rH_K:>20.2e}  {rH_all:>14.2e}")          
-            print()
+        # residuals at corrected vs all eigenvalues
+        r0_K   = np.max(eig_residuals(p0, lam_K))
+        rH_K   = np.max(eig_residuals(p_H, lam_K))
+        r0_all = np.max(eig_residuals(p0, lam_all))
+        rH_all = np.max(eig_residuals(p_H, lam_all))
+
+        eps_str = f"{eps:.0e}" if eps < 0.01 else f"{eps:.3f}"
+        print(f"{'Mang':<22} {eps_str:>7} {d0:>6d}  {r0_K:>20.2e}  {r0_all:>14.2e}")
+        hybrid_label = f"Hybrid-{base} (K={K})"
+        print(f"{hybrid_label:<22} {eps_str:>7} {d0:>6d}  {rH_K:>20.2e}  {rH_all:>14.2e}")          
+        print()
             
+# ══════════════════════════════════════════════════════════════════════════════
+# __main__ — generate all figures
+# ══════════════════════════════════════════════════════════════════════════════
 
+if __name__ == "__main__":
+    kappa   = 9.4721
+    epsilon = 0.1
+    lam     = np.array([1/kappa, 0.381966, 0.723607, 1.000000])
+    fig = plot_hybrid_compare(kappa=kappa, epsilon=epsilon,
+                            eigenvalues=lam , base='sunderhauf')
+    plt.show()
