@@ -941,200 +941,6 @@ BASE_POLYS = {
     'sunderhauf'  : SunderhaufPolynomial,
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Colour / style palette  (used consistently across all figures)
-# ══════════════════════════════════════════════════════════════════════════════
-_C = {
-    "Remez":      "#1f77b4",   # steel blue
-    "Mang":       "#d62728",   # brick red
-    "Sunderhauf": "#2ca02c",   # forest green
-    "Eigenvalue": "#9467bd",   # purple
-    "Hybrid":     "#ff7f0e",   # orange  (Mang + correction)
-    "Grey":       "#555555",
-}
-_LS = {"Remez": "-", "Mang": "--", "Sunderhauf": "-.", "Eigenvalue": ":"}
-_MK = {"Remez": "o", "Mang": "s", "Sunderhauf": "^", "Eigenvalue": "D"}
-
-
-def _min_norm_correction(p_B, d_B: int, a: float, known_eigs):
-    """
-    Minimum-norm coefficient update to zero λ_k p(λ_k)−1 at each known_eig.
-
-    Parameters
-    ----------
-    p_B       : Chebyshev  backbone polynomial
-    d_B       : int        degree of p_B (must be odd)
-    a         : float      σ_min (lower spectral bound)
-    known_eigs: array_like eigenvalues at which to zero the residual
-
-    Returns
-    -------
-    Chebyshev  corrected polynomial (same degree d_B)
-    """
-    lam = np.clip(np.asarray(known_eigs, float), a * 1.002, 0.9999)
-    n   = (d_B + 1) // 2
-    j   = np.arange(n)
-    th  = np.arccos(np.clip(lam, 1e-12, 1 - 1e-12))
-    B   = np.cos(np.outer(th, 2*j + 1))     # (K, n) Chebyshev basis
-    LB  = lam[:, None] * B                   # (K, n) weighted basis
-    r   = -(lam * p_B(lam) - 1)              # residuals to eliminate
-    # Gram matrix solve: c_K = (LB LBᵀ)⁻¹ r
-    G   = LB @ LB.T
-    c_K = np.linalg.solve(G + 1e-14 * np.eye(len(lam)), r)
-    delta_c = LB.T @ c_K                    # coefficient corrections
-    coef = p_B.coef.copy()
-    for j_, v in enumerate(delta_c):
-        coef[2*j_ + 1] += v
-    return Chebyshev(coef)
-
-
-def _styled_axes(ax):
-    """Apply consistent grey-background grid style to an axes."""
-    ax.set_facecolor("#f7f7f7")
-    ax.grid(True, which="major", color="white", lw=1.2, zorder=0)
-    ax.grid(True, which="minor", color="white", lw=0.5, alpha=0.6, zorder=0)
-    ax.tick_params(labelsize=9)
-
-
-
-
-
-
-
-def plot_three_methods(kappa: float = 10.0,
-                       epsilon: float = 0.2,
-                       n_points: int = 2000,
-                       save_path: str = None) -> plt.Figure:
-    """
-    Plot p(x) vs 1/x on [a, 1] for Remez, Mang, and Sunderhauf.
-
-    Parameters
-    ----------
-    kappa     : condition number (kappa = 1/a)
-    epsilon   : target approximation accuracy
-    n_points  : number of evaluation points on [a, 1]
-    save_path : if given, save figure to this path (e.g. 'fig.pdf')
-
-    Returns
-    -------
-    matplotlib Figure
-    """
-    a = 1.0 / kappa
-
-    # ── find minimum degree for each method ──────────────────────────────────
-    d_remez = RemezPolynomial.mindegree(epsilon, a)
-    d_mang  = MangPolynomial.mindegree(epsilon, a)
-    d_sund  = SunderhaufPolynomial.mindegree(epsilon, a)
-
-    # ── build polynomials ─────────────────────────────────────────────────────
-    p_remez = RemezPolynomial.poly(d_remez, a)
-    p_mang  = MangPolynomial.poly(d_mang,  a)
-    p_sund  = SunderhaufPolynomial.poly(d_sund, a)
-
-    # ── evaluate on [a, 1] ───────────────────────────────────────────────────
-    x = np.linspace(a, 1.0, n_points)
-
-    y_exact = 1.0 / x
-    y_remez = p_remez(x)
-    y_mang  = p_mang(x)
-    y_sund  = p_sund(x)
-
-    # ── plot ──────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(5, 3.5))
-
-    ax.plot(x, y_exact, color='k',  lw=2.0, linestyle=':',
-            label=r'$1/x$ (exact)')
-    ax.plot(x, y_remez, color='C0', lw=1.5,
-            label=rf'Remez ($d={d_remez}$)')
-    ax.plot(x, y_mang,  color='C1', lw=1.5, linestyle='--',
-            label=rf'Mang ($d={d_mang}$)')
-    ax.plot(x, y_sund,  color='C2', lw=1.5, linestyle='-.',
-            label=rf'Sund$\ddot{{e}}$rhauf ($d={d_sund}$)')
-
-    ax.set_xlabel(r'$x$', fontsize=14)
-    ax.set_ylabel(r'$p(x)$', fontsize=14)
-    ax.tick_params(labelsize=11)
-    ax.legend(fontsize=10, loc='upper right')
-    ax.set_xlim(0, 1.1)
-    ax.set_ylim(0, kappa * 1.1)
-    ax.grid(True, alpha=0.3)
-
-    fig.tight_layout()
-
-    if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved to {save_path}")
-
-    return fig
-
-
-def plot_three_errors(kappa: float = 10.0,
-                      epsilon: float = 0.2,
-                      n_points: int = 2000,
-                      save_path: str = None) -> plt.Figure:
-    """
-    Plot |x p(x) - 1| on [a, 1] for Remez, Mang, and Sunderhauf.
-
-    Parameters
-    ----------
-    kappa     : condition number (kappa = 1/a)
-    epsilon   : target approximation accuracy
-    n_points  : number of evaluation points on [a, 1]
-    save_path : if given, save figure to this path (e.g. 'fig.pdf')
-
-    Returns
-    -------
-    matplotlib Figure
-    """
-    a = 1.0 / kappa
-
-    # ── find minimum degree for each method ──────────────────────────────────
-    d_remez = RemezPolynomial.mindegree(epsilon, a)
-    d_mang  = MangPolynomial.mindegree(epsilon, a)
-    d_sund  = SunderhaufPolynomial.mindegree(epsilon, a)
-
-    # ── build polynomials ─────────────────────────────────────────────────────
-    p_remez = RemezPolynomial.poly(d_remez, a)
-    p_mang  = MangPolynomial.poly(d_mang,  a)
-    p_sund  = SunderhaufPolynomial.poly(d_sund, a)
-
-    # ── evaluate error on [a, 1] ──────────────────────────────────────────────
-    x = np.linspace(a, 1.0, n_points)
-
-    e_remez = np.abs(x * p_remez(x) - 1.0)
-    e_mang  = np.abs(x * p_mang(x)  - 1.0)
-    e_sund  = np.abs(x * p_sund(x)  - 1.0)
-
-    # ── plot ──────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(5, 3.5))
-
-    ax.semilogy(x, e_remez, color='C0', lw=1.5,
-                label=rf'Remez ($d={d_remez}$)')
-    ax.semilogy(x, e_mang,  color='C1', lw=1.5, linestyle='--',
-                label=rf'Mang ($d={d_mang}$)')
-    ax.semilogy(x, e_sund,  color='C2', lw=1.5, linestyle='-.',
-                label=rf'Sund$\ddot{{e}}$rhauf ($d={d_sund}$)')
-
-    ax.axhline(epsilon, color='k', lw=1.0, linestyle=':',
-               label=rf'$\varepsilon = {epsilon}$')
-
-    ax.set_xlabel(r'$x$', fontsize=14)
-    ax.set_ylabel(r'$|x\,p(x) - 1|$', fontsize=14)
-    ax.tick_params(labelsize=11)
-    ax.legend(fontsize=10, loc='lower right')
-    ax.set_xlim(0, 1.1)
-    ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=8))
-    ax.grid(True, which='both', alpha=0.3)
-
-    fig.tight_layout()
-
-    if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved to {save_path}")
-
-    return fig
-
-
 def hybrid_correction(p0: Chebyshev, eigenvalues: np.ndarray,
                       rcond: float = 1e-10) -> np.ndarray:
     """
@@ -1177,167 +983,70 @@ def hybrid_correction(p0: Chebyshev, eigenvalues: np.ndarray,
     return LB.T @ alpha
 
 
-def plot_hybrid_compare(kappa: float,
-                        epsilon: float,
-                        eigenvalues: np.ndarray,
-                        base: str = 'mang',
-                        n_points: int = 4000,
-                        save_path: str = None) -> plt.Figure:
+def _min_norm_correction(p_B, d_B: int, a: float, known_eigs):
     """
-    Plot |x p(x) - 1| for the base polynomial and the hybrid corrected
-    polynomial. Eigenvalue locations are marked as vertical lines.
+    Minimum-norm coefficient update to zero λ_k p(λ_k)−1 at each known_eig.
 
     Parameters
     ----------
-    kappa       : condition number; determines a = 1/kappa for the base poly
-    epsilon     : target accuracy for the base polynomial
-    eigenvalues : array of K known eigenvalues in (0, 1]; must satisfy
-                  min(eigenvalues) >= 1/kappa = a
-    base        : 'remez', 'mang', or 'sunderhauf'
-    n_points    : evaluation points on [a, 1]
-    save_path   : optional output path (e.g. 'fig.pdf')
+    p_B       : Chebyshev  backbone polynomial
+    d_B       : int        degree of p_B (must be odd)
+    a         : float      σ_min (lower spectral bound)
+    known_eigs: array_like eigenvalues at which to zero the residual
 
     Returns
     -------
-    matplotlib Figure
+    Chebyshev  corrected polynomial (same degree d_B)
     """
-    a   = 1.0 / kappa
-    lam = np.sort(np.asarray(eigenvalues))
-    K   = len(lam)
+    lam = np.clip(np.asarray(known_eigs, float), a * 1.002, 0.9999)
+    n   = (d_B + 1) // 2
+    j   = np.arange(n)
+    th  = np.arccos(np.clip(lam, 1e-12, 1 - 1e-12))
+    B   = np.cos(np.outer(th, 2*j + 1))     # (K, n) Chebyshev basis
+    LB  = lam[:, None] * B                   # (K, n) weighted basis
+    r   = -(lam * p_B(lam) - 1)              # residuals to eliminate
+    # Gram matrix solve: c_K = (LB LBᵀ)⁻¹ r
+    G   = LB @ LB.T
+    c_K = np.linalg.solve(G + 1e-14 * np.eye(len(lam)), r)
+    delta_c = LB.T @ c_K                    # coefficient corrections
+    coef = p_B.coef.copy()
+    for j_, v in enumerate(delta_c):
+        coef[2*j_ + 1] += v
+    return Chebyshev(coef)
 
-    if lam[0] < a:
-        raise ValueError(
-            f"Smallest eigenvalue {lam[0]:.4g} < a = {a:.4g}. "
-            f"Use kappa = 1/min(eigenvalues) = {1/lam[0]:.3f}."
-        )
-
-    # ── build base polynomial ─────────────────────────────────────────────────
-    cls = BASE_POLYS[base.lower()]
-    d0  = cls.mindegree(epsilon, a)
-    p0  = cls.poly(d0, a)
-
-    # ── hybrid correction ─────────────────────────────────────────────────────
-    c_corr       = hybrid_correction(p0, lam)
-    coef_H       = p0.coef.copy()
-    coef_H[1::2] += c_corr
-    p_H          = Chebyshev(coef_H)
-
-    # ── evaluate on [a, 1], including eigenvalues exactly ────────────────────
-    x      = np.union1d(np.linspace(a, 1.0, n_points), lam)
-    e_base = np.abs(x * p0(x) - 1.0)
-    e_hybr = np.abs(x * p_H(x) - 1.0)
-
-    # errors at eigenvalues
-    e_base_eig = np.abs(lam * p0(lam) - 1.0)
-    e_hybr_eig = np.abs(lam * p_H(lam) - 1.0)
-
-    # ── plot ──────────────────────────────────────────────────────────────────
-    base_label = {'remez': 'Remez', 'mang': 'Mang',
-                  'sunderhauf': r'Sund$\ddot{e}$rhauf'}[base.lower()]
-
-    fig, ax = plt.subplots(figsize=(5, 3.5))          # narrow for one column
-
-    ax.semilogy(x, e_base, color='C0', lw=1.5,
-                label=rf'{base_label} base ($d={d0}$)')
-    ax.semilogy(x, e_hybr, color='C1', lw=1.5, linestyle='--',
-                label=rf'Hybrid ($d={d0}$, $K={K}$)')
-
-    ax.semilogy(lam, e_base_eig, 'o', color='C0', ms=6, zorder=5,
-                label=r'$|\lambda_k p_0(\lambda_k)-1|$')
-    ax.semilogy(lam, e_hybr_eig, 's', color='C1', ms=6, zorder=5,
-                label=r'$|\lambda_k p_H(\lambda_k)-1|$')
-
-    ax.axhline(epsilon, color='k', lw=1.0, linestyle=':',
-               label=rf'$\varepsilon = {epsilon}$')
-
-    for lk in lam:
-        ax.axvline(lk, color='gray', lw=0.5, alpha=0.4)
-
-    ax.set_xlabel(r'$x$', fontsize=14)
-    ax.set_ylabel(r'$|x\,p(x) - 1|$', fontsize=14)
-    ax.tick_params(labelsize=11)
-
-    # no title — caption carries this information
-    ax.legend(fontsize=10, loc='lower center')
-    ax.set_xlim(0, 1.1)                               # fixed: was (0, 1.1)
-    ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=10))
-    ax.grid(True, which='both', alpha=0.3)
-
-    fig.tight_layout()
-
-    if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved to {save_path}")
-
-    return fig
-
-
-def print_accuracy_table_1D(m: int = 2, KFactor: float = 0.5,  base: str = 'mang'):
-    """
-        degree_accuracy_experiment.py
-        ==============================
-        Reproduces Table: Degree--accuracy trade-off for Mang vs Hybrid-Mang.
-
-        Reports E_eig separately at:
-        - corrected eigenvalues (K smallest)
-        - all N eigenvalues
-        """
-    N  = 2**m
-    K = int(KFactor * N)
-    h  = 1.0 / (N + 1)
-    k  = np.arange(1, N + 1)
-
-    lam_all = (4.0/h**2) * np.sin(k * np.pi / (2*(N+1)))**2
-    lam_all /= lam_all[-1]
-
-    kappa = 1.0 / lam_all[0]
-    a     = 1.0 / kappa
-    lam_K = lam_all[:K]
-
-    print(f"N={N}, kappa={kappa:.2f}, K={K}\n")
-
-
-    def eig_residuals(p, eigenvalues):
-        vals = np.abs(eigenvalues * p(eigenvalues) - 1.0)
-        return np.maximum(vals, 1e-16)  # avoid exact zero
-
-
-    # ── experiment ────────────────────────────────────────────────────────────────
-    epsilons = [0.1, 0.01, 0.001]
-
-    fmt = f"{'Method':<22} {'eps':>7} {'d':>6}  {'E_eig (K corrected)':>20}  {'E_eig (all N)':>14}"
-    print(fmt)
-    print('-' * len(fmt))
-    cls = BASE_POLYS[base.lower()]
-    for eps in epsilons:
-        d0 = cls.mindegree(eps, a)
-        p0 = cls.poly(d0, a)
-
-        # hybrid
-        coef_H        = p0.coef.copy()
-        coef_H[1::2] += hybrid_correction(p0, lam_K)
-        p_H           = Chebyshev(coef_H)
-
-        # residuals at corrected vs all eigenvalues
-        r0_K   = np.max(eig_residuals(p0, lam_K))
-        rH_K   = np.max(eig_residuals(p_H, lam_K))
-        r0_all = np.max(eig_residuals(p0, lam_all))
-        rH_all = np.max(eig_residuals(p_H, lam_all))
-
-        eps_str = f"{eps:.0e}" if eps < 0.01 else f"{eps:.3f}"
-        print(f"{'Mang':<22} {eps_str:>7} {d0:>6d}  {r0_K:>20.2e}  {r0_all:>14.2e}")
-        hybrid_label = f"Hybrid-{base} (K={K})"
-        print(f"{hybrid_label:<22} {eps_str:>7} {d0:>6d}  {rH_K:>20.2e}  {rH_all:>14.2e}")          
-        print()
-            
-# ══════════════════════════════════════════════════════════════════════════════
-# __main__ — generate all figures
-# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    kappa   = 9.4721
-    epsilon = 0.1
-    lam     = np.array([1/kappa, 0.381966, 0.723607, 1.000000])
-    fig = plot_hybrid_compare(kappa=kappa, epsilon=epsilon,
-                            eigenvalues=lam , base='sunderhauf')
+    kappa = 10
+    eps = 0.01
+    K = 3
+    lam = np.array([1/kappa, 0.5, 1])
+    basePolynomial  = 'sunderhauf' # 'remez' or 'mang' or 'sunderhauf'
+    a = 1/kappa
+    polyClass = BASE_POLYS[basePolynomial.lower()]
+
+    degree   = polyClass.mindegree(eps, 1/kappa)
+    poly = polyClass.poly(degree, 1/kappa)
+
+    corr = hybrid_correction(poly,lam)
+    coef_H       = poly.coef.copy()
+    coef_H[1::2] += corr
+    hybrid_poly = Chebyshev(coef_H)
+
+
+    x = np.union1d(np.linspace(a, 1.0, 1000), lam)
+    y = hybrid_poly(x)
+    plt.plot(x, y)
+    plt.xlabel('x')
+    plt.ylabel('p(x)')
+    plt.title(f'Hybrid with {basePolynomial} polynomial of degree {degree} for a={a:.2f} and eps={eps:.2f}')
+    plt.grid()
+    plt.show()
+
+    error = np.abs(x * hybrid_poly(x) - 1.0)
+    plt.plot(x, error)
+    plt.xlabel('x')
+    plt.ylabel('Error')
+    plt.title(f'Error of hybrid with {basePolynomial} polynomial of degree {degree} for a={a:.2f} and eps={eps:.2f}')
+    plt.yscale('log')
+    plt.grid()
     plt.show()
