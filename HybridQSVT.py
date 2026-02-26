@@ -13,7 +13,7 @@ from HybridPolynomial import (SunderhaufPolynomial,
                             RemezPolynomial,
                             MangPolynomial, hybrid_correction)
 
-from PoissonFunctions import (build_1d_Poisson, eigs_1d_poisson)
+from PoissonFunctions import (build_1d_poisson, eigs_1d_poisson)
 import time
 
 
@@ -290,9 +290,10 @@ class QSVT_Hybrid(QSVT):
         SVD truncation threshold for the Gram system (default 1e-10).
     """
 
-    def __init__(self, A, b, lam_K, rcond=1e-10, **kwargs):
+    def __init__(self, A, b, lam_K, rcond=1e-10, degree_override=None,**kwargs):
         self.lam_K = np.asarray(lam_K)
         self.rcond = rcond
+        self.degree_override = degree_override
         super().__init__(A, b, **kwargs)
 
     def _get_inverse_phases(self, kappa, target_error=None):
@@ -303,8 +304,10 @@ class QSVT_Hybrid(QSVT):
         from pyqsp.angle_sequence import QuantumSignalProcessingPhases
 
         a      = 1.0 / kappa
-        degree = self.polyMethod.mindegree(target_error, a)
-        self.degree = degree
+        if self.degree_override is not None:
+            degree = self.degree_override
+        else:
+            self.degree = degree
 
         # ── base polynomial ───────────────────────────────────────────
         p0 = self.polyMethod.poly(degree, a)

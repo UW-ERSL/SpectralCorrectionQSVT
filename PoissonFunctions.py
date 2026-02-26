@@ -1,15 +1,14 @@
 import numpy as np
 
 
-def build_1d_Poisson(m: int, function_type="uniform"):
+def build_1d_poisson(m: int, function_type="uniform"):
     """Build the 1D Poisson system for a given m (N = 2^m grid points)."""
     N = 2**m
+    h = 1.0 / (N + 1)
     A = (np.diag(np.full(N, 2.0))
          + np.diag(np.full(N - 1, -1.0), k=1)
          + np.diag(np.full(N - 1, -1.0), k=-1))
-    s_max = np.linalg.svd(A, compute_uv=False)[0]
-    A = A / (s_max*1.01 )          # rescale: max sv safely < 1
-
+    A /= h**2  # Scale by grid spacing squared
     if function_type == "uniform":
         b = np.ones(N) / np.sqrt(N)     # uniform load, unit norm
     elif function_type == "delta":
@@ -41,7 +40,8 @@ def build_2d_poisson(m, function_type="uniform"):
         b = np.ones(N) / np.sqrt(N)     # uniform load, unit norm
     elif function_type == "delta":
         b = np.zeros(N)
-        b[N // 2] = 1.0
+        mid = N1 // 2 * N1 + N1 // 2   # centre of N1 x N1 grid
+        b[mid] = 1.0
     elif function_type == "random":
         b = np.random.rand(N)
         b /= np.linalg.norm(b)          # random load, unit norm
@@ -52,7 +52,7 @@ def build_2d_poisson(m, function_type="uniform"):
         b /= np.linalg.norm(b)          # sine load, unit norm
     else:
         raise ValueError(f"Unknown function_type: {function_type}")
-    return A
+    return A, b
 
 def eigs_1d_poisson(m):
     N1  = 2**m
@@ -60,7 +60,6 @@ def eigs_1d_poisson(m):
     k   = np.arange(1, N1 + 1)
     lam = 4.0 / h**2 * np.sin(k * np.pi / (2*(N1+1)))**2
     lam = np.sort(lam)
-    lam = lam / lam.max()   # normalise to [0,1]
     return lam
 
 def eigs_2d_poisson(m):
@@ -70,11 +69,11 @@ def eigs_2d_poisson(m):
     lam1 = 4.0 / h**2 * np.sin(k * np.pi / (2*(N1+1)))**2
     # tensor product: all pairwise sums
     lam2d = (lam1[:, None] + lam1[None, :]).ravel()
-    return np.sort(lam2d)
+    return lam2d
 
 if __name__ == "__main__":
     m = 4
-    A, b = build_1d_Poisson(m, function_type="uniform")
+    A, b = build_1d_poisson(m, function_type="uniform")
     print("1D Poisson eigenvalues:", eigs_1d_poisson(m))
 
  
