@@ -9,9 +9,9 @@ from qiskit_aer import Aer
 from qiskit.quantum_info import Statevector, Operator
 from numpy.polynomial import Chebyshev
 from pyqsp.angle_sequence import QuantumSignalProcessingPhases
-from HybridPolynomial import (SunderhaufPolynomial,
+from SpectralPolynomial import (SunderhaufPolynomial,
                             RemezPolynomial,
-                            MangPolynomial, hybrid_correction)
+                            MangPolynomial, spectral_correction)
 
 from PoissonFunctions import (build_1d_poisson, eigs_1d_poisson)
 import time
@@ -276,7 +276,7 @@ class QSVT:
 
 
 
-class QSVT_Hybrid(QSVT):
+class SpectralQSVT(QSVT):
     """
     Extends QSVT to apply the min-norm hybrid correction before
     computing QSP phase angles.  All other pipeline steps are unchanged.
@@ -307,13 +307,14 @@ class QSVT_Hybrid(QSVT):
         if self.degree_override is not None:
             degree = self.degree_override
         else:
-            self.degree = degree
+           degree = self.polyMethod.mindegree(target_error, a)
 
+        self.degree = degree
         # ── base polynomial ───────────────────────────────────────────
         p0 = self.polyMethod.poly(degree, a)
 
         # ── hybrid correction ─────────────────────────────────────────
-        c_corr        = hybrid_correction(p0, self.lam_K, rcond=self.rcond)
+        c_corr        = spectral_correction(p0, self.lam_K, rcond=self.rcond)
         coef_H        = p0.coef.copy()
         coef_H[1::2] += c_corr
         poly          = Chebyshev(coef_H)

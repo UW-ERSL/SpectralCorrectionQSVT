@@ -26,7 +26,7 @@ MangPolynomial
     (~70% of Remez at κ=100) with no provable L∞ certificate.
     Eigenvalue correction gives ~24× compliance improvement.
 
-EigenvaluePolynomial
+SpectralPolynomial
     Minimum-norm interpolating polynomial at all N known eigenvalues.
     Degree d = 3N−1, independent of κ.  No continuous guarantee between
     eigenvalues; must be used with a continuous backbone for QSVT.
@@ -833,10 +833,10 @@ class SunderhaufPolynomial:
         return 2 * n - 1
 
 # ======================================================================
-# EigenvaluePolynomial
+# SpectralPolynomial
 # ======================================================================
 
-class EigenvaluePolynomial:
+class SpectralPolynomial:
     """
     Minimum-norm polynomial interpolating 1/x at all N known eigenvalues.
 
@@ -941,7 +941,7 @@ BASE_POLYS = {
     'sunderhauf'  : SunderhaufPolynomial,
 }
 
-def hybrid_correction(p0: Chebyshev, eigenvalues: np.ndarray,
+def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
                       rcond: float = 1e-10) -> np.ndarray:
     """
     Compute the min-norm Chebyshev coefficient correction using a
@@ -1027,26 +1027,26 @@ if __name__ == "__main__":
     degree   = polyClass.mindegree(eps, 1/kappa)
     poly = polyClass.poly(degree, 1/kappa)
 
-    corr = hybrid_correction(poly,lam)
+    corr = spectral_correction(poly,lam)
     coef_H       = poly.coef.copy()
     coef_H[1::2] += corr
-    hybrid_poly = Chebyshev(coef_H)
+    spectral_poly = Chebyshev(coef_H)
 
 
     x = np.union1d(np.linspace(a, 1.0, 1000), lam)
-    y = hybrid_poly(x)
+    y = spectral_poly(x)
     plt.plot(x, y)
     plt.xlabel('x')
     plt.ylabel('p(x)')
-    plt.title(f'Hybrid with {basePolynomial} polynomial of degree {degree} for a={a:.2f} and eps={eps:.2f}')
+    plt.title(f'Spectral with {basePolynomial} polynomial of degree {degree} for a={a:.2f} and eps={eps:.2f}')
     plt.grid()
     plt.show()
 
-    error = np.abs(x * hybrid_poly(x) - 1.0)
+    error = np.abs(x * spectral_poly(x) - 1.0)
     plt.plot(x, error)
     plt.xlabel('x')
     plt.ylabel('Error')
-    plt.title(f'Error of hybrid with {basePolynomial} polynomial of degree {degree} for a={a:.2f} and eps={eps:.2f}')
+    plt.title(f'Error of spectral with {basePolynomial} polynomial of degree {degree} for a={a:.2f} and eps={eps:.2f}')
     plt.yscale('log')
     plt.grid()
     plt.show()
