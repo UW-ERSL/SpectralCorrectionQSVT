@@ -23,7 +23,7 @@ Given a base polynomial $p_0(x) \approx 1/x$ and $K$ known eigenvalues of the sy
 ### Setup
 
 ```bash
-git clone https://github.com/<username>/SpectralBootstrapping.git
+git clone https://github.com/UW-ERSL/SpectralBootstrapping.git
 cd SpectralBootstrapping
 pip install -r requirements.txt
 ```
