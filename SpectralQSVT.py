@@ -14,6 +14,7 @@ from SpectralPolynomial import (SunderhaufPolynomial,
                             MangPolynomial, spectral_correction)
 
 from PoissonFunctions import (build_1d_poisson, eigs_1d_poisson)
+from pyqsp.angle_sequence import QuantumSignalProcessingPhases
 import time
 
 
@@ -21,7 +22,7 @@ import time
 # QSVT linear solver
 # ==============================================================================
 class QSVT:
-    def __init__(self, A, b, kappa=None, nShots=1000, target_error=None,
+    def __init__(self, A, b, kappa=None, nShots=1000, target_error=None, degree_override=None,
                  polyMethod='Remez'):
         """
         Parameters
@@ -41,12 +42,14 @@ class QSVT:
                        auto-computed from A) when polyMethod='Eigenvalue'.
         n_factor     : over-parameterisation ratio for 'Eigenvalue'.
                        n = ceil(n_factor * N), d = 2n-1.  Default 1.5.
+        degree_override : if given, use this degree for all polynomials (overrides target_error).
         """
         self.A = A
         self.b = b
         self.nShots = nShots
         self.n = int(np.log2(len(b)))
         self.ancilla_qubits = 1
+        self.degree_override = degree_override
 
         # ── Polynomial method selection ───────────────────────────────
         if polyMethod.lower() == 'remez':
@@ -79,7 +82,10 @@ class QSVT:
     def _get_inverse_phases(self, kappa, target_error=None):
         a = 1.0 / kappa
 
-        if target_error is not None:
+        
+        if self.degree_override is not None:
+            degree = self.degree_override
+        elif target_error is not None:
             degree = self.polyMethod.mindegree(target_error, a)
             self.degree = degree
         else:
@@ -290,25 +296,26 @@ class SpectralQSVT(QSVT):
         SVD truncation threshold for the Gram system (default 1e-10).
     """
 
-    def __init__(self, A, b, lam_K, rcond=1e-10, degree_override=None,**kwargs):
+    def __init__(self, A, b, lam_K, rcond=1e-10, degree_override=None, **kwargs):
         self.lam_K = np.asarray(lam_K)
         self.rcond = rcond
-        self.degree_override = degree_override
-        super().__init__(A, b, **kwargs)
+        super().__init__(A, b, degree_override=degree_override, **kwargs)
 
     def _get_inverse_phases(self, kappa, target_error=None):
         """
         Override: build base polynomial, apply hybrid correction,
         then proceed with normalisation and QSP phase computation.
         """
-        from pyqsp.angle_sequence import QuantumSignalProcessingPhases
+        
 
-        a      = 1.0 / kappa
+        a  = 1.0 / kappa
         if self.degree_override is not None:
             degree = self.degree_override
         else:
-           degree = self.polyMethod.mindegree(target_error, a)
+            degree = self.polyMethod.mindegree(target_error, a)
 
+        print("degree override: ", self.degree_override)
+        print("computed degree: ", degree)
         self.degree = degree
         # ── base polynomial ───────────────────────────────────────────
         p0 = self.polyMethod.poly(degree, a)
@@ -335,6 +342,7 @@ class SpectralQSVT(QSVT):
 
         phases = QuantumSignalProcessingPhases(poly_normalised,
                                                signal_operator="Wx")
+
         return [float(phi) for phi in phases], tau, None
 
 

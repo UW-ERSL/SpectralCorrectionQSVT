@@ -962,6 +962,18 @@ def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
         Additive correction to odd Chebyshev coefficients p0.coef[1::2].
     """
     lam = np.asarray(eigenvalues)
+    lam_sorted = np.sort(lam)
+    lam_unique = [lam_sorted[0]]
+    for l in lam_sorted[1:]:
+        if (l - lam_unique[-1]) / lam_unique[-1] > 1e-3:  # relative gap > 0.1%
+            lam_unique.append(l)
+    lam_unique = np.array(lam_unique)
+
+    if len(lam_unique) < len(lam_sorted):
+        print(f"Removing duplicate eigenvalues: {len(lam_sorted)} -> {len(lam_unique)}")
+
+    lam = lam_unique.copy()
+
     c0  = p0.coef[1::2]
     n0  = len(c0)
     j   = np.arange(n0)
@@ -980,6 +992,8 @@ def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
     alpha    = Vt.T @ (s_inv * (U.T @ r))
 
     # Step 3: correction coefficients
+
+    # inside spectral_correction, after computing G:
     return LB.T @ alpha
 
 
