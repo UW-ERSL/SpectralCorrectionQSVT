@@ -9,9 +9,9 @@ from qiskit_aer import Aer
 from qiskit.quantum_info import Statevector, Operator
 from numpy.polynomial import Chebyshev
 from pyqsp.angle_sequence import QuantumSignalProcessingPhases
-from SpectralPolynomial import (SunderhaufPolynomial,
+from PolynomialApproximators import (SunderhaufPolynomial,
                             RemezPolynomial,
-                            MangPolynomial, spectral_correction)
+                            MangPolynomial, SpectralPolynomial,spectral_correction)
 
 from PoissonFunctions import (build_1d_poisson, eigs_1d_poisson)
 from pyqsp.angle_sequence import QuantumSignalProcessingPhases
@@ -21,7 +21,7 @@ import time
 # ==============================================================================
 # QSVT linear solver
 # ==============================================================================
-class QSVT:
+class StandardQSVT:
     def __init__(self, A, b, kappa=None, nShots=1000, target_error=None, degree_override=None,
                  polyMethod='Remez'):
         """
@@ -281,10 +281,68 @@ class QSVT:
         return u_real / norm_real, success_prob, norm_real
 
 
-
-class SpectralQSVT(QSVT):
+class PureSpectralQSVT(StandardQSVT):
     """
-    Extends QSVT to apply the min-norm hybrid correction before
+    QSVT solver using the pure spectral polynomial, which interpolates
+    1/x exactly at all known eigenvalues without a base polynomial.
+
+    This is optimal when K = N (all eigenvalues known), yielding the
+    lowest possible degree d = 2*ceil(n_factor*N) - 1. When K < N,
+    use SpectrallyBootstrappedQSVT instead.
+
+    Parameters
+    ----------
+    A          : (N, N) real matrix; all singular values in (0, 1).
+    b          : (N,) right-hand side; normalised.
+    eigenvalues: (K,) known eigenvalues, normalised to (0, 1).
+    kappa      : condition number estimate.
+    n_factor   : over-parameterisation ratio (default 1.5, giving d = 3N-1).
+                 Higher values reduce tau at the cost of higher degree.
+    """
+
+    def __init__(self, A, b, eigenvalues, kappa=None, n_factor=1.5, **kwargs):
+        self.eigenvalues = np.asarray(eigenvalues)
+        self.n_factor = n_factor
+        # Build the spectral polynomial before calling super().__init__,
+        # which triggers _get_inverse_phases
+        self._spectral_poly = SpectralPolynomial(self.eigenvalues,
+                                                  n_factor=n_factor)
+        # Don't pass polyMethod to super — we override _get_inverse_phases
+        # Pass a dummy polyMethod to satisfy the base class
+        super().__init__(A, b, kappa=kappa, polyMethod='Mang', **kwargs)
+
+    def _get_inverse_phases(self, kappa, target_error=None):
+        """
+        Override: use the pure spectral polynomial directly.
+        No base polynomial, no correction.
+        """
+        poly = self._spectral_poly.poly()
+        degree = self._spectral_poly.mindegree()
+        self.degree = degree
+
+        # ── normalisation (identical to base class) ───────────────────
+        N_sample        = 25 * degree
+        x_s             = np.linspace(-1, 1, N_sample)
+        M               = (np.max(np.abs(poly(x_s)))
+                           / np.cos(np.pi * degree / (2 * N_sample)))
+        tau             = M
+        poly_normalised = Chebyshev(poly.coef / M)
+
+        max_val = np.max(np.abs(poly_normalised(np.linspace(-1, 1, 2000))))
+        if max_val > 0.999:
+            scale           = 0.999 / max_val
+            poly_normalised = Chebyshev(poly_normalised.coef * scale)
+            tau            /= scale
+
+        phases = QuantumSignalProcessingPhases(poly_normalised,
+                                               signal_operator="Wx")
+
+        return [float(phi) for phi in phases], tau, None
+    
+
+class SpectrallyBootstrappedQSVT(StandardQSVT):
+    """
+    Extends StandardQSVT to apply the min-norm hybrid correction before
     computing QSP phase angles.  All other pipeline steps are unchanged.
 
     Parameters
@@ -355,6 +413,6 @@ if __name__ == "__main__":
 
     A = np.array([[0.5, 0.1], [0.1, 0.3]])
     b = np.array([1.0, 0.0])
-    solver = QSVT(A, b, polyMethod='Remez', target_error=0.01)
+    solver = StandardQSVT(A, b, polyMethod='Remez', target_error=0.01)
     u_dir, success_prob, norm_real = solver.solve(stateVector=True)
-    print(f"QSVT solution direction: {u_dir}, success probability: {success_prob:.4f}, norm_real: {norm_real:.4f}")
+    print(f"StandardQSVT solution direction: {u_dir}, success probability: {success_prob:.4f}, norm_real: {norm_real:.4f}")
