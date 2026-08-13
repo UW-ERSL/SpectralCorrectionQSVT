@@ -28,3 +28,11 @@ Thumbs.db
 .venv/
 venv/
 env/
+
+# Manuscript / revision working files.
+# The paper, rebuttal and bibliography are tracked with the manuscript, not
+# with the code.  Kept out of this repository so that the public code release
+# stays a code release; delete these lines if you would rather version them here.
+main_revised.tex
+rebuttal.tex
+refs_additions.bib

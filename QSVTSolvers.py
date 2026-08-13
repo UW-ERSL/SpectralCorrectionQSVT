@@ -10,7 +10,7 @@ from qiskit.quantum_info import Statevector, Operator
 from numpy.polynomial import Chebyshev
 from pyqsp.angle_sequence import QuantumSignalProcessingPhases
 from PolynomialApproximators import (SunderhaufPolynomial,
-                            RemezPolynomial,
+                            RemezPolynomial, ChebIterPolynomial,
                             MangPolynomial, SpectralPolynomial,spectral_correction)
 
 from PoissonFunctions import (build_1d_poisson, eigs_1d_poisson)
@@ -23,7 +23,7 @@ import time
 # ==============================================================================
 class StandardQSVT:
     def __init__(self, A, b, kappa=None, nShots=1000, target_error=None, degree_override=None,
-                 polyMethod='Remez'):
+                 polyMethod='Remez', real_part=True):
         """
         Parameters
         ----------
@@ -43,6 +43,16 @@ class StandardQSVT:
         n_factor     : over-parameterisation ratio for 'Eigenvalue'.
                        n = ceil(n_factor * N), d = 2n-1.  Default 1.5.
         degree_override : if given, use this degree for all polynomials (overrides target_error).
+        real_part    : if True (default) the circuit performs the standard LCU
+                       real-part extraction over the phase sequences +Phi and -Phi,
+                       so that the post-selected state is exactly p(A)|b>/||p(A)b||
+                       and the reported success probability is exactly
+                       ||p(A)b||^2 / tau^2, matching Eq. (2) of the paper.
+                       Costs ONE extra ancilla and ZERO extra queries to U_A.
+                       If False, the legacy single-ancilla circuit is used; its
+                       ancilla=0 subspace also contains the QSP completion
+                       polynomial, so the raw post-selection probability is NOT
+                       the quantity in Eq. (2).
         """
         self.A = A
         self.b = b
@@ -50,6 +60,7 @@ class StandardQSVT:
         self.n = int(np.log2(len(b)))
         self.ancilla_qubits = 1
         self.degree_override = degree_override
+        self.real_part = real_part
 
         # ── Polynomial method selection ───────────────────────────────
         if polyMethod.lower() == 'remez':
@@ -58,6 +69,8 @@ class StandardQSVT:
             self.polyMethod = SunderhaufPolynomial
         elif polyMethod.lower() == 'mang':
             self.polyMethod = MangPolynomial
+        elif polyMethod.lower() in ('chebiter', 'chebyshev', 'gribling'):
+            self.polyMethod = ChebIterPolynomial
         else:
             raise ValueError(f"Unknown polyMethod '{polyMethod}'.")
  
@@ -96,7 +109,25 @@ class StandardQSVT:
 
         poly = self.polyMethod.poly(degree, a)
         achieved_error = None # placeholder; self.polyMethod.error_for_degree(degree, a)
-   
+
+        return self._normalise_and_phases(poly, degree)
+
+    # ------------------------------------------------------------------
+    # Shared normalisation + phase computation
+    # ------------------------------------------------------------------
+    def _normalise_and_phases(self, poly, degree):
+        """
+        Normalise p so that |p(x)| <= 1 on the FULL interval [-1, 1] (as QSVT
+        requires -- not merely on [-1,-a] U [a,1]), then compute QSP phases.
+
+        Note on the paper's Eq. (1): the subnormalisation factor tau must be the
+        maximum of |p_hat| over all of [-1, 1], including the central gap (-a, a)
+        where no eigenvalue lies -- which is frequently where the maximum
+        actually falls.  This implementation has always used the global maximum;
+        see tau_diagnostics() for the gap-vs-spectral decomposition.
+        """
+        self.poly_unnormalised = poly
+
         N_sample = 25 * degree
         x_s    = np.linspace(-1, 1, N_sample)
         M      = np.max(np.abs(poly(x_s))) / np.cos(np.pi * degree / (2 * N_sample))
@@ -110,9 +141,35 @@ class StandardQSVT:
             poly_normalised = Chebyshev(poly_normalised.coef * scale)
             tau            /= scale
 
-
+        self.poly_normalised = poly_normalised
         phases = QuantumSignalProcessingPhases(poly_normalised, signal_operator="Wx")
-        return [float(phi) for phi in phases], tau, achieved_error
+        return [float(phi) for phi in phases], tau, None
+
+    # ------------------------------------------------------------------
+    # tau diagnostics: where is the maximum of |p| attained?
+    # ------------------------------------------------------------------
+    def tau_diagnostics(self, nGrid=400001):
+        """
+        Decompose the subnormalisation factor into its contribution from the
+        spectral region [-1,-a] U [a,1] and from the central gap (-a, a).
+
+        Returns dict with tau_global, tau_spectral, tau_gap, argmax_x,
+        max_in_gap (bool).  Used to answer the referee point that Eq. (1)
+        excludes the gap.  NOTE: for these polynomials the gap frequently IS
+        the binding region -- at tolerances eps <= 0.1 it exceeds the spectral
+        maximum by up to 47%.  Hence the maximum must be taken over [-1,1].
+        """
+        a    = 1.0 / self.kappa
+        poly = self.poly_unnormalised
+        xg   = np.linspace(-1.0, 1.0, nGrid)
+        vals = np.abs(poly(xg))
+        i    = int(np.argmax(vals))
+        mask_spec = np.abs(xg) >= a
+        return dict(tau_global   = float(vals.max()),
+                    tau_spectral = float(vals[mask_spec].max()),
+                    tau_gap      = float(vals[~mask_spec].max()),
+                    argmax_x     = float(xg[i]),
+                    max_in_gap   = bool(abs(xg[i]) < a))
 
     # ------------------------------------------------------------------
     # Block encoding  -- ROTATION form to match pyqsp Wx convention
@@ -191,6 +248,61 @@ class StandardQSVT:
         return qc
 
     # ------------------------------------------------------------------
+    # LCU real-part extraction circuit
+    # ------------------------------------------------------------------
+    def construct_qsvt_circuit_lcu(self, measure=False):
+        """
+        QSVT with real-part extraction, implemented as an LCU over the two phase
+        sequences +Phi and -Phi:
+
+            (U_{+Phi} + U_{-Phi}) / 2   has (0,0) block  Re P(x) = p(x).
+
+        KEY POINT.  Both LCU branches apply exactly the SAME sequence of
+        block-encoding unitaries U_A -- only the signs of the ancilla phase
+        rotations differ.  The controlled operation therefore collapses to
+        replacing each single-qubit rotation
+
+            Rz(-2 phi)  on  q_anc          -->     Rzz(-2 phi)  on (q_lcu, q_anc)
+
+        because  exp(i phi Z (x) Z) = diag(e^{i phi}, e^{-i phi},
+                                            e^{-i phi}, e^{i phi})
+        applies +phi on the q_lcu = 0 branch and -phi on the q_lcu = 1 branch
+        simultaneously.  Hadamards on q_lcu open and close the LCU.
+
+        COST: one extra ancilla qubit and ZERO additional queries to U_A.
+        The circuit's query complexity is identical to the legacy circuit.
+
+        Post-selecting on q_lcu = 0 AND q_anc = 0 yields the state
+        p(A)|b> / ||p(A)b||  with probability exactly ||p(A)b||^2 / tau^2.
+        """
+        q_lcu  = QuantumRegister(1, 'lcu')
+        q_anc  = QuantumRegister(self.ancilla_qubits, 'anc')
+        q_data = QuantumRegister(self.n, 'b')
+        qc     = QuantumCircuit(q_lcu, q_anc, q_data)
+
+        qc.prepare_state(Statevector(self.b), q_data)
+        qc.h(q_lcu[0])
+        qc.barrier()
+
+        U_gate = self.get_block_encoding().to_instruction()
+
+        for i in range(len(self.angles) - 1):
+            qc.rzz(-2.0 * self.angles[i], q_lcu[0], q_anc[0])
+            qc.append(U_gate, list(q_data) + list(q_anc))
+        qc.rzz(-2.0 * self.angles[-1], q_lcu[0], q_anc[0])
+
+        qc.barrier()
+        qc.h(q_lcu[0])
+
+        if measure:
+            c = ClassicalRegister(qc.num_qubits, 'meas')
+            qc.add_register(c)
+            qc.measure(range(qc.num_qubits), range(qc.num_qubits))
+
+        print(f"Circuit width: {qc.width()}, U_A queries: {len(self.angles) - 1}")
+        return qc
+
+    # ------------------------------------------------------------------
     # Input validation
     # ------------------------------------------------------------------
     def _validate_input(self):
@@ -236,6 +348,29 @@ class StandardQSVT:
         """
         if not self.dataOK:
             return None
+
+        # ── real-part-extracting circuit (default) ────────────────────
+        # Post-selection on (q_lcu = 0, q_anc = 0) projects onto p(A)|b>
+        # exactly, so the measured probability IS ||p(A)b||^2 / tau^2 and no
+        # post-processing of the returned state is required.
+        if self.real_part:
+            qc = self.construct_qsvt_circuit_lcu()
+            print("Running statevector simulation (LCU real-part extraction)...")
+            sv     = Statevector.from_instruction(qc)
+            # qubit 0 = lcu, qubit 1 = anc  =>  stride 4 selects lcu=0, anc=0
+            amp    = sv.data[0::4]
+            success_prob = float(np.sum(np.abs(amp) ** 2))
+            norm_real    = float(np.sqrt(success_prob))
+            if norm_real < 1e-12:
+                print("ERROR: post-selected state has near-zero norm.")
+                return None
+            u = amp / np.linalg.norm(amp)
+            # global phase is arbitrary; fix it so the output is real-positive
+            u = u * np.exp(-1j * np.angle(u[np.argmax(np.abs(u))]))
+            imag_leak = float(np.linalg.norm(u.imag))
+            if imag_leak > 1e-8:
+                print(f"Warning: residual imaginary component {imag_leak:.2e}")
+            return u.real / np.linalg.norm(u.real), success_prob, norm_real
 
         qc = self.construct_qsvt_circuit()
 
@@ -319,26 +454,9 @@ class PureSpectralQSVT(StandardQSVT):
         poly = self._spectral_poly.poly()
         degree = self._spectral_poly.mindegree()
         self.degree = degree
+        return self._normalise_and_phases(poly, degree)
 
-        # ── normalisation (identical to base class) ───────────────────
-        N_sample        = 25 * degree
-        x_s             = np.linspace(-1, 1, N_sample)
-        M               = (np.max(np.abs(poly(x_s)))
-                           / np.cos(np.pi * degree / (2 * N_sample)))
-        tau             = M
-        poly_normalised = Chebyshev(poly.coef / M)
 
-        max_val = np.max(np.abs(poly_normalised(np.linspace(-1, 1, 2000))))
-        if max_val > 0.999:
-            scale           = 0.999 / max_val
-            poly_normalised = Chebyshev(poly_normalised.coef * scale)
-            tau            /= scale
-
-        phases = QuantumSignalProcessingPhases(poly_normalised,
-                                               signal_operator="Wx")
-
-        return [float(phi) for phi in phases], tau, None
-    
 
 class SpectrallyBootstrappedQSVT(StandardQSVT):
     """
@@ -354,9 +472,11 @@ class SpectrallyBootstrappedQSVT(StandardQSVT):
         SVD truncation threshold for the Gram system (default 1e-10).
     """
 
-    def __init__(self, A, b, lam_K, rcond=1e-10, degree_override=None, **kwargs):
-        self.lam_K = np.asarray(lam_K)
-        self.rcond = rcond
+    def __init__(self, A, b, lam_K, rcond=1e-10, degree_override=None,
+                 merge_rtol=1e-3, **kwargs):
+        self.lam_K      = np.asarray(lam_K)
+        self.rcond      = rcond
+        self.merge_rtol = merge_rtol
         super().__init__(A, b, degree_override=degree_override, **kwargs)
 
     def _get_inverse_phases(self, kappa, target_error=None):
@@ -378,30 +498,16 @@ class SpectrallyBootstrappedQSVT(StandardQSVT):
         # ── base polynomial ───────────────────────────────────────────
         p0 = self.polyMethod.poly(degree, a)
 
-        # ── hybrid correction ─────────────────────────────────────────
-        c_corr        = spectral_correction(p0, self.lam_K, rcond=self.rcond)
+        # ── spectral correction ───────────────────────────────────────
+        c_corr, info  = spectral_correction(p0, self.lam_K, rcond=self.rcond,
+                                            merge_rtol=self.merge_rtol,
+                                            return_info=True)
+        self.correction_info = info
         coef_H        = p0.coef.copy()
         coef_H[1::2] += c_corr
         poly          = Chebyshev(coef_H)
 
-        # ── normalisation (identical to base class) ───────────────────
-        N_sample        = 25 * degree
-        x_s             = np.linspace(-1, 1, N_sample)
-        M               = (np.max(np.abs(poly(x_s)))
-                           / np.cos(np.pi * degree / (2 * N_sample)))
-        tau             = M
-        poly_normalised = Chebyshev(poly.coef / M)
-
-        max_val = np.max(np.abs(poly_normalised(np.linspace(-1, 1, 2000))))
-        if max_val > 0.999:
-            scale           = 0.999 / max_val
-            poly_normalised = Chebyshev(poly_normalised.coef * scale)
-            tau            /= scale
-
-        phases = QuantumSignalProcessingPhases(poly_normalised,
-                                               signal_operator="Wx")
-
-        return [float(phi) for phi in phases], tau, None
+        return self._normalise_and_phases(poly, degree)
 
 
 

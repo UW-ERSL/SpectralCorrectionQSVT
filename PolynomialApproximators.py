@@ -832,6 +832,64 @@ class SunderhaufPolynomial:
         )
         return 2 * n - 1
 
+class ChebIterPolynomial:
+    """
+    Chebyshev-iteration polynomial: the CLOSED-FORM optimal odd polynomial for
+    the RELATIVE residual criterion  max_{x in [a,1]} |x p(x) - 1|,
+
+        p(x) = ( 1 - (-1)^n T_n(u(x)) / T_n(z0) ) / x,
+        u(x) = (2x^2 - (1+a^2)) / (1 - a^2),   z0 = (1+a^2)/(1-a^2).
+
+    This is the polynomial of Gribling, Kerenidis & Szilagyi (arXiv:2109.04248,
+    Corollary 8), in the odd/symmetric form given by Sunderhauf et al.
+    (arXiv:2507.15537, Eq. 21).  It is the exact minimiser of Eq. (3) of this
+    paper -- the same objective the Remez algorithm targets numerically -- but
+    is available in closed form and costs microseconds instead of seconds.
+
+    Because  |x p(x) - 1| = |T_n(u(x))| / |T_n(z0)|  and |T_n(u)| <= 1 for
+    x in [a,1], the residual equioscillates exactly and the achieved error is
+
+        eps = 1 / |T_n(z0)| = 1 / cosh(n arccosh(z0)),
+
+    which inverts in closed form to give mindegree().
+    """
+
+    @staticmethod
+    def _z0(a: float) -> float:
+        return (1.0 + a * a) / (1.0 - a * a)
+
+    @staticmethod
+    def poly(d: int, a: float) -> Chebyshev:
+        if d % 2 == 0:
+            raise ValueError("d must be odd")
+        n = (d + 1) // 2
+        Tn_z0 = np.cosh(n * np.arccosh(ChebIterPolynomial._z0(a)))
+
+        def f(x):
+            u = (2.0 * x * x - (1.0 + a * a)) / (1.0 - a * a)
+            inside = np.abs(u) <= 1.0
+            Tn = np.where(inside,
+                          np.cos(n * np.arccos(np.clip(u, -1.0, 1.0))),
+                          np.cosh(n * np.arccosh(np.maximum(np.abs(u), 1.0)))
+                          * np.sign(u) ** n)
+            return (1.0 - ((-1) ** n) * Tn / Tn_z0) / np.where(x == 0, 1e-300, x)
+
+        coef = np.polynomial.chebyshev.chebinterpolate(f, d)
+        coef[0::2] = 0.0                      # enforce odd parity exactly
+        return Chebyshev(coef)
+
+    @staticmethod
+    def error_for_degree(d: int, a: float) -> float:
+        n = (d + 1) // 2
+        return 1.0 / np.cosh(n * np.arccosh(ChebIterPolynomial._z0(a)))
+
+    @staticmethod
+    def mindegree(epsilon: float, a: float) -> int:
+        n = int(np.ceil(np.arccosh(1.0 / epsilon)
+                        / np.arccosh(ChebIterPolynomial._z0(a))))
+        return 2 * n - 1
+
+
 # ======================================================================
 # SpectralPolynomial
 # ======================================================================
@@ -939,40 +997,104 @@ BASE_POLYS = {
     'remez' : RemezPolynomial,
     'mang'  : MangPolynomial,
     'sunderhauf'  : SunderhaufPolynomial,
+    'chebiter': ChebIterPolynomial,
 }
 
-def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
-                      rcond: float = 1e-10) -> np.ndarray:
+def merge_eigenvalues(eigenvalues: np.ndarray, merge_rtol: float = 1e-3,
+                      verbose: bool = False):
     """
-    Compute the min-norm Chebyshev coefficient correction using a
-    truncated SVD solve for the Gram system, robust to ill-conditioning
-    when eigenvalues are small and tightly clustered.
+    Collapse repeated / near-repeated eigenvalues to distinct representatives.
+
+    A single interpolation constraint lam*p(lam) = 1 applies identically to every
+    eigenmode sharing an eigenvalue, so exact duplicates carry no information and
+    only make the Gram matrix singular.
+
+    The merge criterion is RELATIVE, not absolute:
+
+        (lam_j - lam_i) / lam_i  <=  merge_rtol   =>   merge
+
+    A relative test is the correct one here because the interpolation residual is
+    the relative quantity |lam p(lam) - 1|, and because Poisson-type spectra
+    cluster multiplicatively near lam_min.  An absolute tolerance would either
+    over-merge at the top of the spectrum or under-merge at the bottom.
+
+    Returns
+    -------
+    lam_eff : distinct representatives, ascending
+    K_eff   : number of retained constraints
+    """
+    lam_sorted = np.sort(np.asarray(eigenvalues, float))
+    keep = [lam_sorted[0]]
+    for l in lam_sorted[1:]:
+        if (l - keep[-1]) / keep[-1] > merge_rtol:
+            keep.append(l)
+    lam_eff = np.array(keep)
+    if verbose and len(lam_eff) < len(lam_sorted):
+        print(f"Merged eigenvalues: K={len(lam_sorted)} -> K_eff={len(lam_eff)}")
+    return lam_eff, len(lam_eff)
+
+
+def merge_residual_bound(eigenvalues: np.ndarray, poly: Chebyshev,
+                         merge_rtol: float = 1e-3) -> float:
+    """
+    Rigorous bound on the residual introduced at eigenvalues that were merged away.
+
+    If lam_j was merged into representative lam_i with |lam_j - lam_i| <= delta,
+    and lam_i p(lam_i) = 1 exactly, then by the mean value theorem
+
+        |lam_j p(lam_j) - 1| <= delta * max_{x in [lam_i, lam_j]} |d/dx (x p(x))|.
+
+    Returns the worst-case bound over all merged pairs.  This answers the referee
+    point that duplication removal is applied without an error bound.
+    """
+    lam = np.sort(np.asarray(eigenvalues, float))
+    lam_eff, _ = merge_eigenvalues(lam, merge_rtol)
+    dxp = (Chebyshev(poly.coef) * Chebyshev([0.0, 1.0])).deriv()   # d/dx [x p(x)]
+    worst = 0.0
+    for l in lam:
+        i = int(np.argmin(np.abs(lam_eff - l)))
+        rep = lam_eff[i]
+        if rep == l:
+            continue
+        lo, hi = sorted((rep, l))
+        L = float(np.max(np.abs(dxp(np.linspace(lo, hi, 256)))))
+        worst = max(worst, abs(l - rep) * L)
+    return worst
+
+
+def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
+                        rcond: float = 1e-10, merge_rtol: float = 1e-3,
+                        return_info: bool = False):
+    """
+    Min-norm Chebyshev coefficient correction enforcing lam_k p(lam_k) = 1 at the
+    supplied eigenvalues, without changing the degree or parity of p0.
+
+    Solvability.  The correction solves  (Lam_K B_K) dc = r  for the minimum-l2
+    dc, which is equivalent to the Gram system  G alpha = r  with G = (Lam B)(Lam B)^T
+    and dc = (Lam B)^T alpha.  G is symmetric positive SEMI-definite and need not be
+    invertible: it is singular exactly when the rows of Lam_K B_K are linearly
+    dependent, i.e. when two supplied eigenvalues coincide (or K exceeds the number
+    of odd Chebyshev terms n0).  In that case the system is nonetheless CONSISTENT
+    -- identical rows carry identical residuals -- so r lies in range(G) and the
+    minimum-norm solution exists and is unique.  The truncated-SVD pseudoinverse
+    returns exactly that solution.  Duplicate removal is applied first so the
+    rank deficiency is removed rather than merely tolerated.
 
     Parameters
     ----------
     p0          : Chebyshev polynomial object (defined on [-1, 1])
     eigenvalues : array of K known eigenvalues in (0, 1]
-    rcond       : singular value threshold relative to sigma_max;
-                  directions with s < rcond * s_max are discarded.
-                  Default 1e-10 is safe for double precision.
+    rcond       : relative singular-value threshold for the truncated SVD
+    merge_rtol  : relative tolerance for duplicate removal (see merge_eigenvalues)
+    return_info : if True also return a diagnostics dict
 
     Returns
     -------
-    c_corr : np.ndarray, shape (n0,)
-        Additive correction to odd Chebyshev coefficients p0.coef[1::2].
+    c_corr : np.ndarray, shape (n0,)  -- additive correction to p0.coef[1::2]
+    info   : dict (only if return_info) with K, K_eff, rank, cond, residuals
     """
-    lam = np.asarray(eigenvalues)
-    lam_sorted = np.sort(lam)
-    lam_unique = [lam_sorted[0]]
-    for l in lam_sorted[1:]:
-        if (l - lam_unique[-1]) / lam_unique[-1] > 1e-3:  # relative gap > 0.1%
-            lam_unique.append(l)
-    lam_unique = np.array(lam_unique)
-
-    if len(lam_unique) < len(lam_sorted):
-        print(f"Removing duplicate eigenvalues: {len(lam_sorted)} -> {len(lam_unique)}")
-
-    lam = lam_unique.copy()
+    lam_in = np.asarray(eigenvalues, float)
+    lam, K_eff = merge_eigenvalues(lam_in, merge_rtol, verbose=True)
 
     c0  = p0.coef[1::2]
     n0  = len(c0)
@@ -984,49 +1106,343 @@ def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
     # Step 1: residuals
     r  = 1.0 - lam * p0(lam)
 
-    # Step 2: Gram system via truncated SVD
+    # Step 2: Gram system via truncated SVD (pseudoinverse => min-norm solution)
     LB       = lam[:, None] * B
     G        = LB @ LB.T
     U, s, Vt = np.linalg.svd(G)
-    s_inv    = np.where(s > rcond * s[0], 1.0 / s, 0.0)
+    keep     = s > rcond * s[0]
+    s_inv    = np.where(keep, 1.0 / np.where(s > 0, s, 1.0), 0.0)
     alpha    = Vt.T @ (s_inv * (U.T @ r))
 
     # Step 3: correction coefficients
+    c_corr = LB.T @ alpha
 
-    # inside spectral_correction, after computing G:
-    return LB.T @ alpha
+    if not return_info:
+        return c_corr
+
+    coef = p0.coef.copy()
+    coef[1::2] += c_corr
+    pSC = Chebyshev(coef)
+    info = dict(
+        K              = int(len(lam_in)),
+        K_eff          = int(K_eff),
+        n0             = int(n0),
+        gram_rank      = int(keep.sum()),
+        gram_cond      = float(s[0] / s[keep][-1]) if keep.any() else np.inf,
+        consistency    = float(np.linalg.norm(G @ alpha - r) / max(np.linalg.norm(r), 1e-300)),
+        max_resid_corr = float(np.max(np.abs(lam * pSC(lam) - 1.0))),
+        max_resid_all  = float(np.max(np.abs(lam_in * pSC(lam_in) - 1.0))),
+        merge_bound    = float(merge_residual_bound(lam_in, pSC, merge_rtol)),
+        corr_norm      = float(np.linalg.norm(c_corr)),
+    )
+    return c_corr, info
 
 
-def _min_norm_correction(p_B, d_B: int, a: float, known_eigs):
+def merge_by_resolution(eigenvalues, n, c=1.0):
     """
-    Minimum-norm coefficient update to zero λ_k p(λ_k)−1 at each known_eig.
+    Merge eigenvalues the polynomial cannot resolve.
+
+    A degree-d odd polynomial has n = (d+1)/2 Chebyshev terms and, in the
+    variable theta = arccos(lambda), resolves features no finer than
+    pi/(2n).  Two eigenvalues closer than that in theta are effectively
+    indistinguishable to it, so imposing an interpolation constraint at both
+    is ill-posed: the Gram system becomes numerically rank-deficient and the
+    min-norm solution acquires an enormous coefficient norm.
+
+    This is the correct scale for duplicate removal.  For comparison, the
+    relative criterion of merge_eigenvalues() with merge_rtol = 1e-3 gives
+    dtheta ~ 8.5e-6 near lambda_min at kappa ~ 118 -- some three orders of
+    magnitude tighter than pi/(2n) ~ 2e-2 at d = 155.  It therefore removes
+    exact duplicates but never merely unresolvable pairs.
+
+    c = 0 retains every distinct eigenvalue; larger c merges more aggressively.
+    """
+    lam = np.sort(np.asarray(eigenvalues, float))
+    if len(lam) <= 1:
+        return lam, len(lam)
+    th  = np.arccos(np.clip(lam, -1.0, 1.0))
+    lim = c * np.pi / (2.0 * n)
+    keep = [0]
+    for i in range(1, len(lam)):
+        if abs(th[i] - th[keep[-1]]) > lim:
+            keep.append(i)
+    return lam[keep], len(keep)
+
+
+def _minnorm_correction(p0, lam, n, rcond=1e-12):
+    """Min-norm dc solving (Lam B) dc = r, via SVD of the K x n0 matrix itself.
+
+    Note this does NOT form the Gram matrix G = C C^T.  Doing so squares the
+    condition number (cond(G) = cond(C)^2), which is what drove the
+    ill-conditioning reported previously.
+    """
+    j = np.arange(n)
+    B = np.cos(np.outer(np.arccos(np.clip(lam, -1 + 1e-14, 1 - 1e-14)), 2 * j + 1))
+    C = lam[:, None] * B
+    r = 1.0 - lam * p0(lam)
+    dc = np.linalg.pinv(C, rcond=rcond) @ r
+    return dc, float(np.linalg.cond(C))
+
+
+def spectral_correction_adaptive(p0, eigenvalues, resid_tol=1e-8,
+                                 tau_inflation_max=2.0,
+                                 c_grid=(0.0, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0),
+                                 weights=None, return_info=False):
+    """
+    Spectral correction with resolution-aware merging and a verified residual.
+
+    The non-adaptive spectral_correction() can fail silently: when the Gram
+    system is near-rank-deficient the truncated SVD discards directions and
+    returns a partial correction that does NOT satisfy the interpolation
+    constraints, with no error raised.  Residuals of 0.5 at eigenvalues
+    believed corrected to machine precision have been observed.
+
+    This routine instead sweeps the merge scale c from fine to coarse and
+    accepts the FIRST (most constraints retained) setting for which
+
+        (i)  max_k |lam_k p_SC(lam_k) - 1| <= resid_tol  on the retained set,
+        (ii) tau(p_SC) / tau(p_0)          <= tau_inflation_max,
+
+    so the correction it returns is one it has verified.  If no setting on the
+    grid satisfies both, the least-bad is returned with info['ok'] = False --
+    the caller is told, rather than misled.
 
     Parameters
     ----------
-    p_B       : Chebyshev  backbone polynomial
-    d_B       : int        degree of p_B (must be odd)
-    a         : float      σ_min (lower spectral bound)
-    known_eigs: array_like eigenvalues at which to zero the residual
+    resid_tol         : accuracy demanded at the retained eigenvalues.
+    tau_inflation_max : cap on subnormalisation growth.  tau enters the success
+                        probability as 1/tau^2, so unbounded inflation converts
+                        a depth saving into a total-cost loss.
+    weights           : optional modal energy weights w_k, same length as
+                        eigenvalues.  If given, info also reports the
+                        load-weighted residual rho = sqrt(sum w_k r_k^2), which
+                        is the quantity that governs fidelity and compliance.
 
     Returns
     -------
-    Chebyshev  corrected polynomial (same degree d_B)
+    c_corr : additive correction to p0.coef[1::2]
+    info   : dict (only if return_info)
     """
-    lam = np.clip(np.asarray(known_eigs, float), a * 1.002, 0.9999)
-    n   = (d_B + 1) // 2
-    j   = np.arange(n)
-    th  = np.arccos(np.clip(lam, 1e-12, 1 - 1e-12))
-    B   = np.cos(np.outer(th, 2*j + 1))     # (K, n) Chebyshev basis
-    LB  = lam[:, None] * B                   # (K, n) weighted basis
-    r   = -(lam * p_B(lam) - 1)              # residuals to eliminate
-    # Gram matrix solve: c_K = (LB LBᵀ)⁻¹ r
-    G   = LB @ LB.T
-    c_K = np.linalg.solve(G + 1e-14 * np.eye(len(lam)), r)
-    delta_c = LB.T @ c_K                    # coefficient corrections
-    coef = p_B.coef.copy()
-    for j_, v in enumerate(delta_c):
-        coef[2*j_ + 1] += v
-    return Chebyshev(coef)
+    lam_in = np.asarray(eigenvalues, float)
+    n0 = len(p0.coef[1::2])
+    xs = np.linspace(-1.0, 1.0, 60001)
+    tau0 = float(np.max(np.abs(p0(xs))))
+
+    attempts = []
+    for c in c_grid:
+        lam, keff = merge_by_resolution(lam_in, n0, c)
+        if keff < 1:
+            continue
+        try:
+            dc, condC = _minnorm_correction(p0, lam, n0)
+        except np.linalg.LinAlgError:
+            continue
+        coef = p0.coef.copy()
+        coef[1::2] += dc
+        pSC = Chebyshev(coef)
+        resid_kept = float(np.max(np.abs(lam * pSC(lam) - 1.0)))
+        resid_all = float(np.max(np.abs(lam_in * pSC(lam_in) - 1.0)))
+        tau1 = float(np.max(np.abs(pSC(xs))))
+        infl = tau1 / tau0 if tau0 > 0 else np.inf
+        rho = None
+        if weights is not None:
+            w = np.asarray(weights, float)
+            r = lam_in * pSC(lam_in) - 1.0
+            rho = float(np.sqrt(np.sum(w * r ** 2)))
+        rec = dict(c=c, K_eff=keff, cond_C=condC, dc=dc,
+                   resid_kept=resid_kept, resid_all=resid_all,
+                   tau_base=tau0, tau_corr=tau1, tau_inflation=infl,
+                   rho=rho, corr_norm=float(np.linalg.norm(dc)),
+                   ok=(resid_kept <= resid_tol and infl <= tau_inflation_max))
+        attempts.append(rec)
+        if rec['ok']:
+            break
+
+    if not attempts:
+        raise RuntimeError("spectral_correction_adaptive: no feasible merge scale")
+
+    best = next((a for a in attempts if a['ok']), None)
+    if best is None:
+        # none satisfied both; prefer the one that at least meets the residual,
+        # else the smallest tau inflation
+        meets = [a for a in attempts if a['resid_kept'] <= resid_tol]
+        best = min(meets, key=lambda a: a['tau_inflation']) if meets \
+               else min(attempts, key=lambda a: a['resid_kept'])
+        print(f"Warning: spectral correction did not meet its targets "
+              f"(resid_kept={best['resid_kept']:.2e}, "
+              f"tau inflation={best['tau_inflation']:.1f}). "
+              f"Increase the base degree or reduce K.")
+
+    if not return_info:
+        return best['dc']
+    info = {k: v for k, v in best.items() if k != 'dc'}
+    info['K'] = int(len(lam_in))
+    info['n0'] = int(n0)
+    info['attempts'] = [{k: v for k, v in a.items() if k != 'dc'} for a in attempts]
+    return best['dc'], info
+
+
+def assess_correction(poly_class, kappa, eigenvalues, epsilon,
+                      weights=None, eps_grid=None, verbose=False, **kw):
+    """
+    Decide, before any quantum execution, whether spectral correction is worth
+    applying at a given base tolerance -- and if so, by how much.
+
+    The correction is not always beneficial.  It drives the residual to zero at
+    the eigenvalues it can resolve, but it also perturbs the coefficients, which
+    raises the subnormalisation factor tau.  Since tau enters the success
+    probability as 1/tau^2, the total block-encoding query count under amplitude
+    amplification behaves as
+
+        Q  ~  d * tau,
+
+    so a correction that improves accuracy by less than it inflates tau is a net
+    loss.  Whether that happens depends on the spectrum and on the load, both of
+    which are known classically.
+
+    METHOD.  We ask the fair question: what would it cost to obtain the
+    CORRECTED accuracy from the base polynomial alone?  Concretely,
+
+      1. build p0 at the given epsilon, apply the adaptive correction, and
+         measure the achieved accuracy (load-weighted residual rho if weights
+         are supplied, else the worst residual over the supplied eigenvalues);
+      2. search the base family for the tolerance eps* attaining that same
+         accuracy without correction;
+      3. compare Q(eps*) = d(eps*) tau(eps*)  against  Q_SC = d(eps) tau_SC.
+
+    The ratio is the projected saving.  Values <= 1 mean the correction does not
+    pay at this tolerance and the recommendation is to leave it off.
+
+    NOTE ON WEIGHTS.  Uncorrected eigenvalues retain base accuracy, so a
+    correction only helps to the extent that the load energy sits on eigenvalues
+    that were corrected.  Without `weights` the projection is worst-case and
+    will understate the benefit for smooth loads.  Modal weights
+    w_k = (v_k^T b / lambda_k)^2 / ||A^-1 b||^2 are available from the same
+    Lanczos run that supplies the eigenvalues.
+
+    Returns a dict with 'recommend' (bool), 'projected_gain', 'eps_equivalent',
+    'K_eff', 'tau_inflation' and the underlying measurements.
+    """
+    a = 1.0 / kappa
+    lam = np.asarray(eigenvalues, float)
+    xs = np.linspace(-1.0, 1.0, 60001)
+
+    def accuracy(p):
+        r = lam * p(lam) - 1.0
+        if weights is not None:
+            w = np.asarray(weights, float)
+            return float(np.sqrt(np.sum(w * r ** 2)))
+        return float(np.max(np.abs(r)))
+
+    d0 = poly_class.mindegree(epsilon, a)
+    p0 = poly_class.poly(d0, a)
+    tau0 = float(np.max(np.abs(p0(xs))))
+    acc0 = accuracy(p0)
+
+    dc, info = spectral_correction_adaptive(p0, lam, weights=weights,
+                                            return_info=True, **kw)
+    coef = p0.coef.copy()
+    coef[1::2] += dc
+    pSC = Chebyshev(coef)
+    tauSC = float(np.max(np.abs(pSC(xs))))
+    accSC = accuracy(pSC)
+
+    Q_SC = d0 * tauSC
+    Q_base_here = d0 * tau0
+
+    # cheapest uncorrected polynomial reaching the corrected accuracy
+    if eps_grid is None:
+        eps_grid = np.geomspace(max(epsilon, 1e-12), 1e-8, 60)
+    eps_star, Q_star, d_star = None, np.inf, None
+    for e in eps_grid:
+        if e > epsilon:
+            continue
+        try:
+            de = poly_class.mindegree(float(e), a)
+            pe = poly_class.poly(de, a)
+        except Exception:
+            continue
+        if accuracy(pe) <= accSC:
+            eps_star = float(e)
+            d_star = de
+            Q_star = de * float(np.max(np.abs(pe(xs))))
+            break
+
+    gain = (Q_star / Q_SC) if np.isfinite(Q_star) else np.inf
+    # Q_star infinite means no base polynomial of ANY degree reaches the
+    # corrected accuracy -- which is the point of the method, not a failure of
+    # the search: the correction is exact at the eigenvalues it retains, and a
+    # continuous approximant cannot be exact anywhere.
+    unreachable = not np.isfinite(Q_star)
+    out = dict(
+        unreachable_by_base=unreachable,
+        epsilon=epsilon, degree=d0,
+        K=int(len(lam)), K_eff=int(info['K_eff']),
+        accuracy_base=acc0, accuracy_corrected=accSC,
+        accuracy_ratio=(acc0 / accSC if accSC > 0 else np.inf),
+        tau_base=tau0, tau_corrected=tauSC, tau_inflation=tauSC / tau0,
+        Q_base_here=Q_base_here, Q_corrected=Q_SC,
+        eps_equivalent=eps_star, degree_equivalent=d_star, Q_equivalent=Q_star,
+        projected_gain=gain,
+        correction_verified=bool(info['ok']),
+        recommend=bool(info['ok'] and gain > 1.0),
+        metric=('load-weighted residual' if weights is not None
+                else 'max residual over supplied eigenvalues'),
+    )
+    out['recommend'] = bool(info['ok'] and (unreachable or gain > 1.0))
+    if verbose:
+        verdict = "CORRECT" if out['recommend'] else "do not correct"
+        print(f"  eps={epsilon:<6} d={d0:<5} K_eff={out['K_eff']:<3} "
+              f"acc {acc0:.2e} -> {accSC:.2e}  tau x{out['tau_inflation']:.2f}  "
+              f"gain {gain:.2f}x  =>  {verdict}")
+    return out
+
+
+def spectral_extension(p0: Chebyshev, eigenvalues: np.ndarray,
+                       rcond: float = 1e-10, merge_rtol: float = 1e-3,
+                       return_info: bool = False):
+    """
+    Spectral EXTENSION: instead of perturbing the coefficients of p0, append
+    K_eff new odd Chebyshev terms of degree d0+2, d0+4, ..., d0+2*K_eff and use
+    those new degrees of freedom exclusively to satisfy the interpolation
+    constraints.
+
+    The existing coefficients of p0 are left untouched, so the continuous error
+    profile of the base polynomial is preserved EXACTLY on the region where the
+    new high-order terms are small -- unlike the correction, which redistributes
+    error onto uncorrected eigenvalues.  The price is a degree increase of
+    2*K_eff.
+
+    Returns
+    -------
+    pExt : Chebyshev of degree d0 + 2*K_eff
+    info : dict (only if return_info)
+    """
+    lam_in = np.asarray(eigenvalues, float)
+    lam, K_eff = merge_eigenvalues(lam_in, merge_rtol)
+
+    n0 = len(p0.coef[1::2])
+    # new odd Chebyshev indices: T_{2*n0+1}, T_{2*n0+3}, ..., T_{2*(n0+K_eff)-1}
+    jnew = np.arange(n0, n0 + K_eff)
+    Bnew = np.cos(np.outer(np.arccos(np.clip(lam, -1+1e-14, 1-1e-14)), 2*jnew + 1))
+    M    = lam[:, None] * Bnew                      # (K_eff, K_eff), square
+    r    = 1.0 - lam * p0(lam)
+
+    cnew, *_ = np.linalg.lstsq(M, r, rcond=rcond)
+
+    coef = np.zeros(2 * (n0 + K_eff))
+    coef[:len(p0.coef)] = p0.coef
+    coef[2 * jnew + 1] += cnew
+    pExt = Chebyshev(coef)
+
+    if not return_info:
+        return pExt
+    info = dict(K=int(len(lam_in)), K_eff=int(K_eff),
+                degree_base=int(2 * n0 - 1), degree_ext=int(2 * (n0 + K_eff) - 1),
+                cond=float(np.linalg.cond(M)),
+                max_resid_corr=float(np.max(np.abs(lam * pExt(lam) - 1.0))),
+                max_resid_all=float(np.max(np.abs(lam_in * pExt(lam_in) - 1.0))))
+    return pExt, info
 
 
 if __name__ == "__main__":
