@@ -12,9 +12,11 @@ there.
 Since x p(x) - 1 = x (p(x) - 1/x), the panels differ by one power of x, so the
 measured envelope slopes differ by exactly 1.
 
-Outputs polynomialErrorsRelative.png and polynomialErrorsAbsolute.png, to be
-placed with \\subcaptionbox as in the existing Figure 1.
+Outputs figs/polynomialComparison.png, figs/polynomialErrorsRelative.png and
+figs/polynomialErrorsAbsolute.png, placed with \\subcaptionbox as Figure 1.
 """
+import os
+
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -23,6 +25,8 @@ import matplotlib.pyplot as plt
 from PolynomialApproximators import (ChebIterPolynomial as CI,
                                      MangPolynomial as MA,
                                      SunderhaufPolynomial as SU)
+
+FIGDIR = "figs"  # all output goes here; the .tex has \graphicspath{{figs/}{./}}
 
 KAPPA, EPS = 10.0, 0.2
 A = 1.0 / KAPPA
@@ -80,9 +84,9 @@ def panel(kind, fname):
     ax.legend(fontsize=8.5, loc="lower center", ncol=1, framealpha=0.95,
               edgecolor="#cccccc", labelcolor="#222222")
     fig.tight_layout()
-    fig.savefig(fname, dpi=200, bbox_inches="tight")
+    fig.savefig(os.path.join(FIGDIR, fname), dpi=200, bbox_inches="tight")
     plt.close(fig)
-    print(f"  wrote {fname}")
+    print(f"  wrote {os.path.join(FIGDIR, fname)}")
 
 
 def approx_panel(fname="polynomialComparison.png"):
@@ -108,9 +112,9 @@ def approx_panel(fname="polynomialComparison.png"):
     ax.legend(fontsize=8.5, loc="upper right", framealpha=0.95,
               edgecolor="#cccccc", labelcolor="#222222")
     fig.tight_layout()
-    fig.savefig(fname, dpi=200, bbox_inches="tight")
+    fig.savefig(os.path.join(FIGDIR, fname), dpi=200, bbox_inches="tight")
     plt.close(fig)
-    print(f"  wrote {fname}")
+    print(f"  wrote {os.path.join(FIGDIR, fname)}")
 
 
 def envelopes():
@@ -131,6 +135,7 @@ def envelopes():
 
 
 if __name__ == "__main__":
+    os.makedirs(FIGDIR, exist_ok=True)
     approx_panel()
     panel("relative", "polynomialErrorsRelative.png")
     panel("absolute", "polynomialErrorsAbsolute.png")
