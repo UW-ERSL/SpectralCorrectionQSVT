@@ -75,5 +75,3 @@ if __name__ == "__main__":
     m = 4
     A, b = build_1d_poisson(m, function_type="uniform")
     print("1D Poisson eigenvalues:", eigs_1d_poisson(m))
-
- 

@@ -78,7 +78,7 @@ def evaluate(lam, kappa, eps, K):
     coef = p0.coef.copy()
     coef[1::2] += cc
     pSC = Chebyshev(coef)
-    return d, tau_of(p0), tau_of(pSC), info['gram_cond'], info['K_eff'], info['corr_norm']
+    return d, tau_of(p0), tau_of(pSC), info['cond_C'], info['K_eff'], info['corr_norm']
 
 
 def best_epsilon(lam, kappa, K, eps_grid=EPS_GRID):

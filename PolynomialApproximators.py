@@ -9,22 +9,19 @@ with pyqsp / QuantumSignalProcessingPhases.
 
 Classes
 -------
-RemezPolynomial
-    Minimax for the RELATIVE criterion  max_{x in [a,1]} |xp(x)−1|.
-    Exact certificate; natural baseline for compliance-based QSVT.
-    Eigenvalue correction adds no benefit (already equioscillates).
+ChebIterPolynomial
+    Minimax for the RELATIVE criterion  max_{x in [a,1]} |xp(x)−1|, in closed
+    form (Gribling et al., optimal Chebyshev iteration).  The exact optimum for
+    the criterion this work imposes; used as the reference base.
 
 SunderhaufPolynomial
     Minimax for the ABSOLUTE criterion  max_{x in [a,1]} |p(x)−1/x|.
-    Closed-form recurrence; ~30× faster than Remez to construct.
-    Mindegree is ~5% higher than Remez for the same ε.
-    Eigenvalue correction gives ~9× compliance improvement (criterion
-    mismatch leaves a fixable relative-error residual at λ_min).
+    Closed-form recurrence.  Its degree exceeds ChebIter's because the absolute
+    criterion is stricter by up to κ, not because it is a weaker construction.
 
 MangPolynomial
-    L2-optimal in θ-space (θ = arccos x); lower degree than Remez/Sunderhauf
-    (~70% of Remez at κ=100) with no provable L∞ certificate.
-    Eigenvalue correction gives ~24× compliance improvement.
+    L2-optimal in θ-space (θ = arccos x), with no uniform certificate; the
+    residual is not equioscillatory and can peak near x = a.
 
 SpectralPolynomial
     Minimum-norm interpolating polynomial at all N known eigenvalues.
@@ -33,8 +30,8 @@ SpectralPolynomial
 
 References
 ----------
-Remez (1934); Trefethen, "Approximation Theory and Approximation Practice",
-SIAM 2019; Mang et al., CCIS 2744 (2026); Sunderhauf et al., arXiv:2507.15537.
+Gribling et al., arXiv:2109.04248; Mang et al., CCIS 2744 (2026);
+Sunderhauf et al., arXiv:2507.15537.
 """
 
 import math
@@ -123,28 +120,20 @@ import matplotlib.ticker as ticker
 # allows more pointwise error than L∞ does.  The result is lower degree at
 # the cost of elevated relative error near x = a.
 #
-# Empirical degree comparison (ε ≈ 1%, relative criterion):
-#   κ =     20 :  Remez d =  147,  Sunderhauf d =  149,  Mang d =  115  (0.78× Remez)
-#   κ =    100 :  Remez d =  755,  Sunderhauf d =  899,  Mang d =  533  (0.71× Remez)
-#   κ =    450 :  Remez d = 3385,  Sunderhauf d = 4723,  Mang d = 2327  (0.69× Remez)
+# Degree comparison at kappa = 117.63 (relative criterion, eps = 0.01):
+#   ChebIter d = 623   Mang d = 639   Sunderhauf d = 1103
+# ChebIter is the exact optimum; Mang is within 3-14% of it across eps, and
+# Sunderhauf's larger degree is criterion mismatch (absolute vs relative,
+# a factor of up to kappa by eq. critRelation), not weaker construction.
 #
-# ── When to prefer Mang vs other backbones ────────────────────────────────
-# Prefer Mang when:
-#   • κ is large and circuit depth (degree) is the binding constraint.
-#   • The RHS vector b has little energy in modes near σ_min (smooth loads
-#     in topology optimisation / FEM with uniform body forces).
-#   • ~0.05% compliance accuracy after K=1 eigenvalue correction is sufficient.
-#
-# Prefer Remez when:
-#   • No eigenvalue information is available and compliance accuracy is paramount.
-#   • A provable max|xp-1| ≤ ε guarantee on [a,1] is required (QSVT certificate).
-#   • Note: eigenvalue correction adds NO benefit over Remez alone.
-#
-# Prefer Sunderhauf when:
-#   • Fast polynomial construction is needed (closed-form recurrence, ~30× faster
-#     than Remez at d=257).
-#   • Eigenvalue correction will be applied (Sunderhauf's absolute-criterion
-#     residual is correctable; Remez's is not).
+# ── Which base to use ─────────────────────────────────────────────────────
+# Use ChebIter when a provably optimal baseline for the relative criterion is
+#   wanted; this is the reference base in the paper.
+# Use Mang when degree is the binding constraint and no uniform certificate is
+#   required.
+# Use Sunderhauf when the solution error, rather than the residual, is what
+#   must be controlled.
+# All three are correctable; the spectral correction is agnostic to the base.
 #
 # ── Interface (identical to SunderhaufPolynomial) ──────────────────────────
 #   MangPolynomial.mindegree(epsilon, a)        -> int   (minimum odd degree)
@@ -163,402 +152,6 @@ import matplotlib.ticker as ticker
 # ==============================================================================
 
 
-
-# ==============================================================================
-# RemezPolynomial — drop-in replacement for SunderhaufPolynomial
-#
-# Computes the TRUE minimax (Chebyshev) odd polynomial approximation to 1/x
-# on [a, 1] for a given degree d, via the Remez exchange algorithm.
-#
-# ── Criterion comparison: Remez vs Sunderhauf vs Mang ────────────────────────
-#
-# The three classes minimise DIFFERENT objectives.  For an odd polynomial p:
-#
-#   RemezPolynomial      (this class):
-#     Minimises  max_{x in [a,1]}  |x·p(x) - 1|        (relative error)
-#     poly(d,a)         → exact minimax for this (relative) criterion at degree d
-#     error_for_degree  → exact certificate E*(d,a) for the relative criterion
-#     mindegree         → true minimum degree; binary search with Remez calls
-#
-#   SunderhaufPolynomial:
-#     Minimises  max_{x in [a,1]}  |p(x) - 1/x|        (absolute error)
-#     poly(d,a)         → exact minimax for this (absolute) criterion at degree d
-#     error_for_degree  → EXACT closed-form: (1-a)^n / (a(1+a)^(n-1)), TIGHT
-#     mindegree         → closed-form upper bound for absolute criterion
-#
-#   MangPolynomial:
-#     Minimises  ∫ |p(θ) - 1/x(θ)|² dθ                 (L2 in θ-space)
-#     poly(d,a)         → L2-optimal; no L∞ certificate
-#     error_for_degree  → sampled L∞ estimate; not a provable bound
-#     mindegree         → binary search on sampled estimate
-#
-# The absolute and relative criteria are related by |p-1/x| = |xp-1|/x, so
-# the absolute criterion up-weights errors near x=a by 1/a = κ.  Sunderhauf
-# is minimax for its (harder) criterion; Remez is minimax for its criterion.
-# Neither is universally superior — they solve different problems.
-#
-# KEY CONSEQUENCE for compliance-based QSVT (topology optimisation, FEM):
-#   Compliance error  |ΔJ/J| ≤ Σ_k w_k |λ_k p(λ_k) - 1|
-#   is bounded by max|xp(x)-1| — the RELATIVE criterion.
-#   → Remez is the natural backbone for compliance-accurate QSVT.
-#   → Sunderhauf's degree is ~5% higher than Remez at matching ε (absolute vs
-#     relative criterion), but Sunderhauf is ~30× faster to compute.
-#   → Eigenvalue correction (min-norm) benefits Sunderhauf (systematic residual
-#     from criterion mismatch) but NOT Remez (already equioscillates in |xp-1|).
-#
-# ── The Remez exchange algorithm ─────────────────────────────────────────────
-#
-# By the Chebyshev equioscillation theorem, the minimax odd polynomial p* of
-# degree d = 2n-1 approximating f(x) = 1/x on [a,1] is characterised by:
-#
-#   e(x) = x·p*(x) - 1  equioscillates at exactly n+1 points in [a,1]:
-#   it alternates between +E* and -E* where E* = max|e(x)| is the minimax error.
-#
-# Algorithm:
-#   1. Initialise n+1 reference points uniformly in theta = arccos(x) space.
-#      (Uniform-in-theta is far better conditioned than Chebyshev nodes in x,
-#       because the true equioscillation points for 1/x cluster near x=a,
-#       corresponding to large theta near theta_max = arccos(a).)
-#   2. Solve the (n+1)×(n+1) levelled interpolation system for
-#      coefficients c and level E such that:
-#         x_i · p(x_i) - 1 = (-1)^i · E   for i = 0,...,n.
-#   3. Locate all local extrema of e(x) on [a,1] exactly: coarse scan in
-#      x-space to find sign-constant segments, then scipy bounded minimisation
-#      within each segment (exact to 1e-13).
-#   4. Select n+1 alternating-sign extrema and use them as the new reference set.
-#   5. Repeat until |E| converges.
-#
-# ── Numerical note ────────────────────────────────────────────────────────────
-# The levelled system is solved in float64. At large degrees the Chebyshev
-# basis matrix becomes ill-conditioned if reference points are spaced in x;
-# uniform theta-spacing keeps condition numbers acceptable up to degree ~1000
-# (sufficient for all practical QSVT applications considered here).
-#
-# ── Interface (identical to SunderhaufPolynomial) ─────────────────────────────
-#   RemezPolynomial.mindegree(epsilon, a)   -> int    minimum odd degree
-#   RemezPolynomial.poly(d, a)              -> Chebyshev object
-#   RemezPolynomial.error_for_degree(d, a)  -> float  exact minimax L∞ error
-# ==============================================================================
-
-import numpy as np
-import math
-from numpy.polynomial.chebyshev import Chebyshev
-
-
-
-class RemezPolynomial:
-    """
-    True minimax odd polynomial for 1/x on [a,1], via the Remez algorithm.
-
-    Drop-in replacement for SunderhaufPolynomial with identical interface.
-    poly() returns the unique minimiser of max_{x in [a,1]} |x·p(x) - 1|
-    over all odd polynomials of degree <= d.
-    """
-
-    _MAX_ITER: int = 80      # max Remez iterations
-    _TOL: float    = 1e-10   # convergence tolerance on equioscillation level
-    _N_SCAN: int   = 4000    # coarse x-scan points for segment detection
-
-    # ------------------------------------------------------------------
-    # Odd Chebyshev basis (evaluated at theta values, not x values)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _basis_theta(thetas: np.ndarray, n: int) -> np.ndarray:
-        """
-        B[i,j] = T_{2j+1}(cos(theta_i)) = cos((2j+1)*theta_i).
-        Shape (len(thetas), n). Well-conditioned for uniform theta grids.
-        """
-        return np.column_stack([np.cos((2*j + 1) * thetas) for j in range(n)])
-
-    # ------------------------------------------------------------------
-    # Extremum search on [a, 1]  —  vectorised, no scipy
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _find_extrema(c: np.ndarray, n: int, a: float,
-                      e_scan: np.ndarray = None,
-                      x_scan: np.ndarray = None):
-        """
-        Locate all local extrema of e(x) = x·p(x) - 1 on [a, 1].
-
-        Replaces the original scipy.minimize_scalar approach with a fully
-        vectorised coarse scan + 3-point parabolic refinement.  When
-        called from _remez, the pre-computed e_scan and x_scan are passed
-        in so the O(N_SCAN × n) matmul is shared across convergence check
-        and extremum search — one matmul per iteration instead of two.
-
-        Peak location accuracy: ~(dx)^2 ≈ 6e-8, giving |E| error < 2e-9
-        (< 1e-4 relative), verified against minimize_scalar.  Sufficient
-        for the Remez exchange which only needs the equioscillation level
-        to converge within _TOL = 1e-10.
-        """
-        j_idx = np.arange(n, dtype=np.float64)
-
-        if e_scan is None:
-            x_scan  = np.linspace(a, 1.0, RemezPolynomial._N_SCAN)
-            th_scan = np.arccos(np.clip(x_scan, -1.0 + 1e-14, 1.0 - 1e-14))
-            e_scan  = x_scan * (np.cos(np.outer(th_scan, 2.0*j_idx+1.0)) @ c) - 1.0
-
-        abs_e   = np.abs(e_scan)
-        sgn     = np.sign(e_scan)
-        changes = np.where(np.diff(sgn))[0]
-        bounds  = np.concatenate([[0], changes + 1, [len(e_scan)]])
-
-        extrema = []
-        for ki in range(len(bounds) - 1):
-            lo_i = bounds[ki]
-            hi_i = min(bounds[ki + 1], len(e_scan) - 1)
-            if hi_i - lo_i < 1:
-                continue
-            pk = int(np.argmax(abs_e[lo_i : hi_i + 1])) + lo_i
-
-            # 3-point parabolic sub-sample refinement
-            if 0 < pk < len(e_scan) - 1:
-                y0, y1, y2 = abs_e[pk-1], abs_e[pk], abs_e[pk+1]
-                x0, x1, x2 = x_scan[pk-1], x_scan[pk], x_scan[pk+1]
-                denom = (x0 - x1) * (x0 - x2) * (x1 - x2)
-                if abs(denom) > 1e-20:
-                    A = (x2*(y1-y0) + x1*(y0-y2) + x0*(y2-y1)) / denom
-                    B = (x2**2*(y0-y1) + x1**2*(y2-y0) + x0**2*(y1-y2)) / denom
-                    if A < 0.0:
-                        xpk = -B / (2.0 * A)
-                        if x0 <= xpk <= x2:
-                            th_pk = float(np.arccos(np.clip(xpk, -1+1e-14, 1-1e-14)))
-                            bv    = np.cos((2.0*j_idx + 1.0) * th_pk)
-                            extrema.append((float(xpk), float(xpk)*(float(bv@c))-1.0))
-                            continue
-
-            xpk   = float(x_scan[pk])
-            th_pk = float(np.arccos(np.clip(xpk, -1+1e-14, 1-1e-14)))
-            bv    = np.cos((2.0*j_idx + 1.0) * th_pk)
-            extrema.append((xpk, float(xpk)*(float(bv@c))-1.0))
-
-        extrema.append((float(a),   float(e_scan[0])))
-        extrema.append((float(1.0), float(e_scan[-1])))
-        extrema.sort(key=lambda xe: xe[0])
-        deduped = [extrema[0]]
-        for xe in extrema[1:]:
-            if xe[0] - deduped[-1][0] > 1e-10:
-                deduped.append(xe)
-        return deduped
-
-    # ------------------------------------------------------------------
-    # Core Remez
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _remez(d: int, a: float):
-        """
-        Run Remez exchange and return (Chebyshev poly p*, float E_star).
-
-        Optimisations vs the original implementation
-        --------------------------------------------
-        1. _basis_theta uses np.outer instead of a Python column_stack loop.
-        2. The error scan (x·p(x)-1 on N_SCAN points) is a single matmul,
-           and the resulting e_scan array is passed directly into _find_extrema
-           — avoiding a second O(N_SCAN × n) evaluation per iteration.
-        3. _find_extrema uses parabolic peak refinement (no scipy.minimize_scalar),
-           giving ~8× speedup on the extremum search with <1e-4 relative E error.
-        """
-        n     = (d + 1) // 2
-        j_idx = np.arange(n, dtype=np.float64)
-
-        # Initialise reference points uniformly in theta = arccos(x) space.
-        # Uniform-in-theta is critical: equioscillation points for 1/x cluster
-        # near x=a (large theta), giving a well-conditioned levelled system.
-        theta_max = float(np.arccos(a))
-        k         = np.arange(n + 1, dtype=np.float64)
-        x_ref     = np.clip(np.cos(theta_max * k / n), a, 1.0)
-
-        # Pre-build the fixed scan grid (reused every iteration)
-        x_scan  = np.linspace(a, 1.0, RemezPolynomial._N_SCAN)
-        th_scan = np.arccos(np.clip(x_scan, -1.0 + 1e-14, 1.0 - 1e-14))
-
-        E_star = np.inf
-        c      = None
-
-        for _ in range(RemezPolynomial._MAX_ITER):
-
-            # ── Levelled interpolation ─────────────────────────────────
-            # x_i · (B[i,:] @ c) - 1 = (-1)^i · E   for i = 0,...,n
-            th_ref = np.arccos(np.clip(x_ref, -1.0 + 1e-14, 1.0 - 1e-14))
-            B_ref  = np.cos(np.outer(th_ref, 2.0 * j_idx + 1.0))   # (n+1, n)
-            signs  = (-1.0) ** np.arange(n + 1)
-            M      = np.column_stack([x_ref[:, None] * B_ref, -signs])
-
-            try:
-                sol = np.linalg.solve(M, np.ones(n + 1))
-            except np.linalg.LinAlgError:
-                sol, *_ = np.linalg.lstsq(M, np.ones(n + 1), rcond=None)
-            c = sol[:n]
-
-            # ── Vectorised error scan (shared with extremum search) ────
-            B_scan = np.cos(np.outer(th_scan, 2.0 * j_idx + 1.0))
-            e_scan = x_scan * (B_scan @ c) - 1.0
-            E_new  = float(np.max(np.abs(e_scan)))
-
-            # ── Convergence check ──────────────────────────────────────
-            if abs(E_new - E_star) < RemezPolynomial._TOL:
-                E_star = E_new
-                break
-            E_star = E_new
-
-            # ── Extremum search — reuses e_scan, no scipy ─────────────
-            extrema = RemezPolynomial._find_extrema(
-                c, n, a, e_scan=e_scan, x_scan=x_scan)
-
-            # ── Exchange: select n+1 alternating extrema ───────────────
-            new_ref = _select_alternating(extrema, n + 1)
-            if len(new_ref) == n + 1:
-                x_ref = np.array(new_ref)
-
-        # ── Build Chebyshev object ─────────────────────────────────────
-        coef = np.zeros(2 * n)
-        for j, cj in enumerate(c):
-            coef[2*j + 1] = cj
-        return Chebyshev(coef), E_star
-
-    # ------------------------------------------------------------------
-    # Public interface — identical to SunderhaufPolynomial
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def poly(d: int, a: float) -> Chebyshev:
-        """
-        True minimax odd polynomial of degree d approximating 1/x on [a, 1].
-
-        This is the unique minimiser of max_{x in [a,1]} |x·p(x) - 1| over
-        all odd polynomials of degree <= d. Found via the Remez algorithm.
-
-        Parameters
-        ----------
-        d : int    Odd polynomial degree.
-        a : float  Left endpoint; a = sigma_min of the block-encoded matrix.
-
-        Returns
-        -------
-        Chebyshev  Minimax polynomial p* with p*(x) ≈ 1/x on [a, 1].
-        """
-        if d % 2 == 0:
-            raise ValueError(f"d must be odd, got {d}.")
-        if not (0 < a < 1):
-            raise ValueError(f"a must be in (0, 1), got {a}.")
-        p, _ = RemezPolynomial._remez(d, a)
-        return p
-
-    @staticmethod
-    def error_for_degree(d: int, a: float) -> float:
-        """
-        Exact minimax L∞ error at degree d:
-
-            E*(d, a) = min_{p odd, deg<=d}  max_{x in [a,1]} |x·p(x) - 1|
-
-        Unlike Sunderhauf's closed-form (conservative for 1/x) and Mang's
-        sampled estimate (not a certificate), this is the exact best-achievable
-        error for any odd polynomial of degree d approximating 1/x on [a,1].
-
-        Parameters
-        ----------
-        d : int    Odd polynomial degree.
-        a : float  Left endpoint.
-
-        Returns
-        -------
-        float  Exact minimax error E*(d, a).
-        """
-        if d % 2 == 0:
-            d += 1
-        _, E = RemezPolynomial._remez(d, a)
-        return E
-
-    @staticmethod
-    def mindegree(epsilon: float, a: float) -> int:
-        """
-        Minimum odd degree d such that E*(d, a) <= epsilon.
-
-        Exponential search to bracket, then binary search with Remez at each
-        candidate. Gives the minimum degree for a provable L∞ guarantee
-        specific to 1/x — always <= Sunderhauf's closed-form degree.
-
-        Parameters
-        ----------
-        epsilon : float  Target L∞ error.
-        a       : float  Left endpoint a = sigma_min.
-
-        Returns
-        -------
-        int  Minimum odd d with E*(d, a) <= epsilon.
-        """
-        if not (0 < epsilon < 1):
-            raise ValueError(f"epsilon must be in (0, 1), got {epsilon}.")
-        if not (0 < a < 1):
-            raise ValueError(f"a must be in (0, 1), got {a}.")
-
-        # Sunderhauf closed-form is a guaranteed upper bound
-        n_sund = math.ceil(
-            (math.log(1/epsilon) + math.log(1/a) + math.log(1+a))
-            / math.log((1+a)/(1-a))
-        )
-        d_max = 2 * n_sund - 1
-
-        if RemezPolynomial.error_for_degree(1, a) <= epsilon:
-            return 1
-
-        # Exponential search: 1, 3, 7, 15, ..., capped at d_max
-        d = 1
-        while RemezPolynomial.error_for_degree(d, a) > epsilon:
-            next_d = min(d * 2 + 1, d_max)
-            if next_d == d:
-                break
-            d = next_d
-
-        d_hi = d
-        d_lo = max(1, (d // 2) | 1)    # largest previously tried (odd)
-
-        # Binary search in [d_lo, d_hi]
-        while d_lo < d_hi:
-            d_mid = (d_lo + d_hi) // 2
-            if d_mid % 2 == 0:
-                d_mid += 1
-            if d_mid >= d_hi:
-                break
-            if RemezPolynomial.error_for_degree(d_mid, a) <= epsilon:
-                d_hi = d_mid
-            else:
-                d_lo = d_mid + 2
-
-        return d_hi
-
-
-# ------------------------------------------------------------------
-# Helper: greedy alternating-sign selection from sorted (x, e) list
-# ------------------------------------------------------------------
-
-def _select_alternating(extrema, n: int):
-    """
-    Select n alternating-sign points from sorted (x,e) pairs,
-    replacing within a sign group when a larger |e| is found.
-    Tries both starting signs and returns the best (longest) result.
-    """
-    best = []
-    for start_sign in [+1.0, -1.0]:
-        sel_x, sel_e = [], []
-        for x, e in extrema:
-            sg = np.sign(e)
-            if sg == 0:
-                continue
-            if not sel_e:
-                if sg == start_sign:
-                    sel_x.append(x); sel_e.append(e)
-            elif sg == np.sign(sel_e[-1]):
-                if abs(e) > abs(sel_e[-1]):
-                    sel_x[-1] = x; sel_e[-1] = e
-            else:
-                sel_x.append(x); sel_e.append(e)
-        if len(sel_x) >= n and len(sel_x) > len(best):
-            best = sel_x[:n]
-    return best
 
 class MangPolynomial:
     """
@@ -774,19 +367,18 @@ class SunderhaufPolynomial:
 
     Ref: Sunderhauf et al., arXiv:2507.15537 (2025).
 
-    Note: this is NOT the same as RemezPolynomial, which minimises the
-    RELATIVE criterion max|xp(x)-1|.  The two differ by a factor of 1/x:
+    Note: this is NOT the same criterion as ChebIterPolynomial, which minimises
+    the RELATIVE criterion max|xp(x)-1|.  The two differ by a factor of 1/x:
 
         |p(x) - 1/x|  =  |xp(x) - 1| / x
 
-    so the absolute criterion up-weights errors near x=a by κ = 1/a.
-    Consequently Sunderhauf's mindegree is typically 5–10% higher than
-    Remez's at the same ε.  However it is ~30× faster to compute.
+    so the absolute criterion up-weights errors near x=a by κ = 1/a, and
+    Sunderhauf's mindegree is correspondingly larger at the same ε.
 
-    For compliance-based QSVT: Sunderhauf has a systematic relative-error
-    residual at λ_min (criterion mismatch) that min-norm eigenvalue correction
-    can remove (~9× improvement).  Remez has no such residual and gains
-    nothing from correction.
+    For compliance-based QSVT: because the absolute criterion is tightest where
+    the load energy sits, its relative-error residual near λ_min is small, and
+    the spectral correction has correspondingly less to recover than it does
+    from a base optimised for the relative criterion.
     """
 
     @staticmethod
@@ -843,8 +435,7 @@ class ChebIterPolynomial:
     This is the polynomial of Gribling, Kerenidis & Szilagyi (arXiv:2109.04248,
     Corollary 8), in the odd/symmetric form given by Sunderhauf et al.
     (arXiv:2507.15537, Eq. 21).  It is the exact minimiser of Eq. (3) of this
-    paper -- the same objective the Remez algorithm targets numerically -- but
-    is available in closed form and costs microseconds instead of seconds.
+    paper, available in closed form and costing microseconds to construct.
 
     Because  |x p(x) - 1| = |T_n(u(x))| / |T_n(z0)|  and |T_n(u)| <= 1 for
     x in [a,1], the residual equioscillates exactly and the achieved error is
@@ -902,10 +493,10 @@ class SpectralPolynomial:
     the polynomial need only satisfy λ_i p(λ_i) = 1 at those N discrete points.
     This replaces the continuous minimax problem on [a,1] with an underdetermined
     linear system in the odd-Chebyshev basis, yielding degree d = 3N−1 regardless
-    of κ — compared to d ~ O(κ log(κ/ε)) for Remez or Sunderhauf.
+    of κ — compared to d ~ O(κ log(κ/ε)) for any continuous-interval base.
 
     WARNING: This polynomial has NO guarantee on [a,1] between eigenvalues.
-    It must be paired with a continuous backbone (Remez, Sunderhauf, or Mang)
+    It must be paired with a continuous backbone (ChebIter, Sunderhauf, or Mang)
     via the min-norm eigenvalue correction when used in QSVT — see the hybrid
     strategy in the accompanying document.
 
@@ -994,7 +585,6 @@ class SpectralPolynomial:
         }
 
 BASE_POLYS = {
-    'remez' : RemezPolynomial,
     'mang'  : MangPolynomial,
     'sunderhauf'  : SunderhaufPolynomial,
     'chebiter': ChebIterPolynomial,
@@ -1062,6 +652,9 @@ def merge_residual_bound(eigenvalues: np.ndarray, poly: Chebyshev,
     return worst
 
 
+_SQRT_EPS = float(np.sqrt(np.finfo(float).eps))   # ~1.49e-8: machine-precision check
+
+
 def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
                         rcond: float = 1e-10, merge_rtol: float = 1e-3,
                         return_info: bool = False):
@@ -1069,16 +662,17 @@ def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
     Min-norm Chebyshev coefficient correction enforcing lam_k p(lam_k) = 1 at the
     supplied eigenvalues, without changing the degree or parity of p0.
 
-    Solvability.  The correction solves  (Lam_K B_K) dc = r  for the minimum-l2
-    dc, which is equivalent to the Gram system  G alpha = r  with G = (Lam B)(Lam B)^T
-    and dc = (Lam B)^T alpha.  G is symmetric positive SEMI-definite and need not be
-    invertible: it is singular exactly when the rows of Lam_K B_K are linearly
-    dependent, i.e. when two supplied eigenvalues coincide (or K exceeds the number
-    of odd Chebyshev terms n0).  In that case the system is nonetheless CONSISTENT
-    -- identical rows carry identical residuals -- so r lies in range(G) and the
-    minimum-norm solution exists and is unique.  The truncated-SVD pseudoinverse
-    returns exactly that solution.  Duplicate removal is applied first so the
-    rank deficiency is removed rather than merely tolerated.
+    Solvability.  The correction solves the underdetermined system  C dc = r,
+    C = Lam_K B_K, for the minimum-l2 dc, via the SVD of C itself.  C is rank
+    deficient exactly when its rows are linearly dependent, i.e. when two supplied
+    eigenvalues coincide (or K exceeds the number of odd Chebyshev terms n0).  The
+    system is nonetheless CONSISTENT -- identical rows carry identical residuals --
+    so the minimum-norm solution exists and is unique, and the truncated-SVD
+    pseudoinverse returns exactly that solution.  Duplicate removal is applied first
+    so the rank deficiency is removed rather than merely tolerated.
+
+    The Gram form  G alpha = r,  G = C C^T,  dc = C^T alpha  is mathematically
+    equivalent but is NOT used: cond(G) = cond(C)^2.
 
     Parameters
     ----------
@@ -1106,16 +700,12 @@ def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
     # Step 1: residuals
     r  = 1.0 - lam * p0(lam)
 
-    # Step 2: Gram system via truncated SVD (pseudoinverse => min-norm solution)
-    LB       = lam[:, None] * B
-    G        = LB @ LB.T
-    U, s, Vt = np.linalg.svd(G)
-    keep     = s > rcond * s[0]
-    s_inv    = np.where(keep, 1.0 / np.where(s > 0, s, 1.0), 0.0)
-    alpha    = Vt.T @ (s_inv * (U.T @ r))
-
-    # Step 3: correction coefficients
-    c_corr = LB.T @ alpha
+    # Step 2/3: minimum-norm solution of the underdetermined system C dc = r,
+    # obtained from the SVD of C ITSELF.  The Gram form G = C C^T is NOT formed:
+    # cond(G) = cond(C)^2, which is what drove the ill-conditioning reported
+    # previously.
+    C      = lam[:, None] * B
+    c_corr = np.linalg.pinv(C, rcond=rcond) @ r
 
     if not return_info:
         return c_corr
@@ -1127,9 +717,9 @@ def spectral_correction(p0: Chebyshev, eigenvalues: np.ndarray,
         K              = int(len(lam_in)),
         K_eff          = int(K_eff),
         n0             = int(n0),
-        gram_rank      = int(keep.sum()),
-        gram_cond      = float(s[0] / s[keep][-1]) if keep.any() else np.inf,
-        consistency    = float(np.linalg.norm(G @ alpha - r) / max(np.linalg.norm(r), 1e-300)),
+        rank           = int(np.linalg.matrix_rank(C, tol=rcond * np.linalg.norm(C, 2))),
+        cond_C         = float(np.linalg.cond(C)),
+        consistency    = float(np.linalg.norm(C @ c_corr - r) / max(np.linalg.norm(r), 1e-300)),
         max_resid_corr = float(np.max(np.abs(lam * pSC(lam) - 1.0))),
         max_resid_all  = float(np.max(np.abs(lam_in * pSC(lam_in) - 1.0))),
         merge_bound    = float(merge_residual_bound(lam_in, pSC, merge_rtol)),
@@ -1184,7 +774,7 @@ def _minnorm_correction(p0, lam, n, rcond=1e-12):
     return dc, float(np.linalg.cond(C))
 
 
-def spectral_correction_adaptive(p0, eigenvalues, resid_tol=1e-8,
+def spectral_correction_adaptive(p0, eigenvalues, resid_tol=_SQRT_EPS,
                                  tau_inflation_max=2.0,
                                  c_grid=(0.0, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0),
                                  weights=None, return_info=False):
@@ -1209,7 +799,11 @@ def spectral_correction_adaptive(p0, eigenvalues, resid_tol=1e-8,
 
     Parameters
     ----------
-    resid_tol         : accuracy demanded at the retained eigenvalues.
+    resid_tol         : machine-precision CHECK on the retained eigenvalues, not a
+                        tunable tolerance.  The correction enforces exact
+                        interpolation, so the achieved residual is either O(eps_mach)
+                        or O(1e-1) with nothing between; any threshold separating the
+                        two yields the same K_eff.  Default sqrt(eps_mach) ~ 1.5e-8.
     tau_inflation_max : cap on subnormalisation growth.  tau enters the success
                         probability as 1/tau^2, so unbounded inflation converts
                         a depth saving into a total-cost loss.
@@ -1282,119 +876,153 @@ def spectral_correction_adaptive(p0, eigenvalues, resid_tol=1e-8,
     return best['dc'], info
 
 
-def assess_correction(poly_class, kappa, eigenvalues, epsilon,
-                      weights=None, eps_grid=None, verbose=False, **kw):
+_Q_FLOOR = 1e-10          # base construction stalls here in double precision
+
+
+_XGRID = np.linspace(-1.0, 1.0, 60001)
+
+
+def _tau(p):
+    """Subnormalisation: max |p| over the full interval [-1, 1]."""
+    return float(np.max(np.abs(p(_XGRID))))
+
+
+def correct_at_tolerance(poly_class, kappa, eigenvalues, epsilon,
+                         gamma_max=2.0,
+                         c_grid=(0.0, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0)):
     """
-    Decide, before any quantum execution, whether spectral correction is worth
-    applying at a given base tolerance -- and if so, by how much.
+    ALGORITHM A -- verified correction at a GIVEN base tolerance.
 
-    The correction is not always beneficial.  It drives the residual to zero at
-    the eigenvalues it can resolve, but it also perturbs the coefficients, which
-    raises the subnormalisation factor tau.  Since tau enters the success
-    probability as 1/tau^2, the total block-encoding query count under amplitude
-    amplification behaves as
+    Builds p0 at d(epsilon) and sweeps the merge scale c.  A candidate is
+    accepted when
 
-        Q  ~  d * tau,
+        (a) R_ret = max_{k <= K_eff} |lam_k p_SC(lam_k) - 1| <= sqrt(eps_mach)
+        (b) gamma = tau(p_SC) / tau(p_0)                     <= gamma_max
 
-    so a correction that improves accuracy by less than it inflates tau is a net
-    loss.  Whether that happens depends on the spectrum and on the load, both of
-    which are known classically.
+    and among the accepted ones the smallest R_all (the residual over ALL
+    supplied eigenvalues) is returned.  Taking the first acceptance instead
+    would favour coarse merges, which satisfy (a) trivially by discarding
+    constraints.
 
-    METHOD.  We ask the fair question: what would it cost to obtain the
-    CORRECTED accuracy from the base polynomial alone?  Concretely,
+    Use this directly when the degree is fixed by a hardware budget.  When it
+    is not, adaptive_spectral_correction sweeps epsilon and calls this at each
+    tolerance.
 
-      1. build p0 at the given epsilon, apply the adaptive correction, and
-         measure the achieved accuracy (load-weighted residual rho if weights
-         are supplied, else the worst residual over the supplied eigenvalues);
-      2. search the base family for the tolerance eps* attaining that same
-         accuracy without correction;
-      3. compare Q(eps*) = d(eps*) tau(eps*)  against  Q_SC = d(eps) tau_SC.
-
-    The ratio is the projected saving.  Values <= 1 mean the correction does not
-    pay at this tolerance and the recommendation is to leave it off.
-
-    NOTE ON WEIGHTS.  Uncorrected eigenvalues retain base accuracy, so a
-    correction only helps to the extent that the load energy sits on eigenvalues
-    that were corrected.  Without `weights` the projection is worst-case and
-    will understate the benefit for smooth loads.  Modal weights
-    w_k = (v_k^T b / lambda_k)^2 / ||A^-1 b||^2 are available from the same
-    Lanczos run that supplies the eigenvalues.
-
-    Returns a dict with 'recommend' (bool), 'projected_gain', 'eps_equivalent',
-    'K_eff', 'tau_inflation' and the underlying measurements.
+    Returns a dict with 'epsilon', 'd', 'c', 'K_eff', 'R_ret', 'R_all',
+    'gamma', 'tau0' and 'dc', or None if no merge scale verifies.
     """
     a = 1.0 / kappa
-    lam = np.asarray(eigenvalues, float)
-    xs = np.linspace(-1.0, 1.0, 60001)
+    lam_in = np.asarray(eigenvalues, float)
+    d = poly_class.mindegree(epsilon, a)
+    p0 = poly_class.poly(d, a)
+    n0 = len(p0.coef[1::2])
+    tau0 = _tau(p0)
 
-    def accuracy(p):
-        r = lam * p(lam) - 1.0
-        if weights is not None:
-            w = np.asarray(weights, float)
-            return float(np.sqrt(np.sum(w * r ** 2)))
-        return float(np.max(np.abs(r)))
-
-    d0 = poly_class.mindegree(epsilon, a)
-    p0 = poly_class.poly(d0, a)
-    tau0 = float(np.max(np.abs(p0(xs))))
-    acc0 = accuracy(p0)
-
-    dc, info = spectral_correction_adaptive(p0, lam, weights=weights,
-                                            return_info=True, **kw)
-    coef = p0.coef.copy()
-    coef[1::2] += dc
-    pSC = Chebyshev(coef)
-    tauSC = float(np.max(np.abs(pSC(xs))))
-    accSC = accuracy(pSC)
-
-    Q_SC = d0 * tauSC
-    Q_base_here = d0 * tau0
-
-    # cheapest uncorrected polynomial reaching the corrected accuracy
-    if eps_grid is None:
-        eps_grid = np.geomspace(max(epsilon, 1e-12), 1e-8, 60)
-    eps_star, Q_star, d_star = None, np.inf, None
-    for e in eps_grid:
-        if e > epsilon:
+    cand = None
+    for c in c_grid:
+        lam, keff = merge_by_resolution(lam_in, n0, c)
+        if keff < 1:
             continue
         try:
-            de = poly_class.mindegree(float(e), a)
-            pe = poly_class.poly(de, a)
-        except Exception:
+            dc, _ = _minnorm_correction(p0, lam, n0)
+        except np.linalg.LinAlgError:
             continue
-        if accuracy(pe) <= accSC:
-            eps_star = float(e)
-            d_star = de
-            Q_star = de * float(np.max(np.abs(pe(xs))))
-            break
+        coef = p0.coef.copy()
+        coef[1::2] += dc
+        pSC = Chebyshev(coef)
+        R_ret = float(np.max(np.abs(lam * pSC(lam) - 1.0)))
+        R_all = float(np.max(np.abs(lam_in * pSC(lam_in) - 1.0)))
+        g = _tau(pSC) / tau0 if tau0 > 0 else np.inf
+        if R_ret <= _SQRT_EPS and g <= gamma_max:
+            if cand is None or R_all < cand['R_all']:
+                cand = dict(epsilon=float(epsilon), d=int(d), c=float(c),
+                            K_eff=int(keff), R_ret=R_ret, R_all=R_all,
+                            gamma=float(g), tau0=float(tau0), dc=dc)
+    return cand
 
-    gain = (Q_star / Q_SC) if np.isfinite(Q_star) else np.inf
-    # Q_star infinite means no base polynomial of ANY degree reaches the
-    # corrected accuracy -- which is the point of the method, not a failure of
-    # the search: the correction is exact at the eigenvalues it retains, and a
-    # continuous approximant cannot be exact anywhere.
-    unreachable = not np.isfinite(Q_star)
-    out = dict(
-        unreachable_by_base=unreachable,
-        epsilon=epsilon, degree=d0,
-        K=int(len(lam)), K_eff=int(info['K_eff']),
-        accuracy_base=acc0, accuracy_corrected=accSC,
-        accuracy_ratio=(acc0 / accSC if accSC > 0 else np.inf),
-        tau_base=tau0, tau_corrected=tauSC, tau_inflation=tauSC / tau0,
-        Q_base_here=Q_base_here, Q_corrected=Q_SC,
-        eps_equivalent=eps_star, degree_equivalent=d_star, Q_equivalent=Q_star,
-        projected_gain=gain,
-        correction_verified=bool(info['ok']),
-        recommend=bool(info['ok'] and gain > 1.0),
-        metric=('load-weighted residual' if weights is not None
-                else 'max residual over supplied eigenvalues'),
-    )
-    out['recommend'] = bool(info['ok'] and (unreachable or gain > 1.0))
+
+def adaptive_spectral_correction(poly_class, kappa, eigenvalues,
+                                 gamma_max=2.0, eps_grid=None,
+                                 c_grid=(0.0, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0),
+                                 verbose=False):
+    """
+    The two-stage algorithm of Sec. 4.3.
+
+    STAGE 1 sweeps the base tolerance eps and returns the best corrected
+    polynomial for the supplied eigenvalues.  For each eps it builds p0 at
+    d(eps) and sweeps the merge scale c, accepting every c for which
+
+        (a) R_ret = max_{k <= K_eff} |lam_k p_SC(lam_k) - 1| <= sqrt(eps_mach)
+        (b) gamma = tau(p_SC) / tau(p_0)                     <= gamma_max
+
+    and among those, keeping the one with the smallest R_all.
+
+    Tightening eps raises d, hence n0, hence the number of resolvable
+    constraints, so it buys accuracy only while more of the supplied set is
+    retained.  The sweep therefore stops once R_all reaches machine precision
+    or stops improving; eps is an OUTPUT of the procedure, not an input.
+
+    STAGE 2 asks what the uncorrected base family costs at the same accuracy.
+    The base residual on the spectrum equals its tolerance, so eps* = R_all and
+    d(eps*) follows by inverting the closed-form error relation -- one
+    evaluation, no search.  The inversion is floored at 1e-10, where the base
+    construction stalls in double precision, so G is a LOWER BOUND.
+
+    Returns a dict with 'epsilon', 'd', 'K_eff', 'R_ret', 'R_all', 'gamma',
+    'Q_SC', 'eps_star', 'd_star', 'Q_0', 'G' and 'recommend'.
+    """
+    a = 1.0 / kappa
+    lam_in = np.asarray(eigenvalues, float)
+    xs = _XGRID
+    if eps_grid is None:
+        eps_grid = (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2,
+                    0.1, 0.05, 0.02, 0.01, 5e-3, 2e-3, 1e-3)
+
+    tau = _tau
+
+    # ---------------- Stage 1: sweep eps, calling Algorithm A ------------
+    best, history = None, []
+    for eps in eps_grid:
+        cand = correct_at_tolerance(poly_class, kappa, lam_in, eps,
+                                    gamma_max=gamma_max, c_grid=c_grid)
+
+        history.append(dict(epsilon=float(eps), accepted=cand is not None,
+                            R_all=(cand['R_all'] if cand else None)))
+        if cand is None:
+            continue                          # tighten and retry
+        if best is not None and cand['R_all'] >= best['R_all']:
+            break                             # plateau: keep the previous eps
+        best = cand
+        if best['R_all'] <= _SQRT_EPS:
+            break                             # saturated: nothing left to buy
+
+    if best is None:
+        raise RuntimeError("adaptive_spectral_correction: no tolerance on the "
+                           "grid yields a verified correction")
+
+    # ---------------- Stage 2 -------------------------------------------
+    eps_star = max(best['R_all'], _Q_FLOOR)
+    d_star = poly_class.mindegree(eps_star, a)
+    tau_star = tau(poly_class.poly(d_star, a))
+
+    Q_SC = best['d'] * best['gamma'] * best['tau0']
+    Q_0 = d_star * tau_star
+    G = Q_0 / Q_SC
+
+    out = dict(best)
+    out.pop('dc')
+    out.update(dc=best['dc'], Q_SC=float(Q_SC), eps_star=float(eps_star),
+               d_star=int(d_star), tau_star=float(tau_star), Q_0=float(Q_0),
+               G=float(G), recommend=bool(G > 1.0),
+               floored=bool(best['R_all'] < _Q_FLOOR), history=history)
     if verbose:
-        verdict = "CORRECT" if out['recommend'] else "do not correct"
-        print(f"  eps={epsilon:<6} d={d0:<5} K_eff={out['K_eff']:<3} "
-              f"acc {acc0:.2e} -> {accSC:.2e}  tau x{out['tau_inflation']:.2f}  "
-              f"gain {gain:.2f}x  =>  {verdict}")
+        print(f"  Stage 1: eps={out['epsilon']:<5} d={out['d']:<5} "
+              f"K_eff={out['K_eff']:<4} R_all={out['R_all']:.2e} "
+              f"gamma={out['gamma']:.2f}  Q_SC={Q_SC:.0f}")
+        print(f"  Stage 2: eps*={eps_star:.2e} d*={d_star:<5} "
+              f"Q_0={Q_0:.0f}  G={G:.1f}  "
+              f"{'correct' if G > 1 else 'use the base polynomial'}"
+              f"{'  (G is a lower bound)' if out['floored'] else ''}")
     return out
 
 
@@ -1450,7 +1078,7 @@ if __name__ == "__main__":
     eps = 0.01
     K = 3
     lam = np.array([1/kappa, 0.5, 1])
-    basePolynomial  = 'sunderhauf' # 'remez' or 'mang' or 'sunderhauf'
+    basePolynomial  = 'sunderhauf' # 'chebiter' or 'mang' or 'sunderhauf'
     a = 1/kappa
     polyClass = BASE_POLYS[basePolynomial.lower()]
 
