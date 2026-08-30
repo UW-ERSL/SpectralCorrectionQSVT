@@ -1,0 +1,27 @@
+% ---------------------------------------------------------------------
+% GENERATED FILE -- DO NOT EDIT BY HAND.
+% Produced by makeTables.py (tab_assess).  Edit that function and re-run:
+%     python makeTables.py assess
+% ---------------------------------------------------------------------
+\begin{table}[htbp]
+\centering\color{blue}
+\caption{Assessment for the 2D Poisson operator, $N = 256$, $\kap = 117.6$,
+$K = 32$, $\gamma_{\max} = 2$. $R_K$ is the residual over the supplied eigenvalues after
+correction and $d(\varepsilon^{*})$ the degree the uncorrected base needs to match it,
+floored at $\varepsilon^{*} = 10^{-10}$ where the base construction stalls in double
+precision, so $G$ of Equation \eqref{eq:gain} is a lower bound. Tolerances above $0.5$, at which Algorithm~A reports failure, are omitted. All quantities are computed classically.}
+\label{tab:assess}
+{\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{rrrrrrr}
+\toprule
+$\varepsilon$ & $d$ & $K_{\rm eff}$ & $R_K$
+  & $\gamma$ & $d(\varepsilon^{*})$ & $G$ \\
+\midrule
+$0.5$ & 155 & 8 & $1.9$                & 1.96 & --- & $<1$ \\
+$0.4$ & 185 & 8 & $1.6$                & 1.64 & --- & $<1$ \\
+$0.3$ & 221 & 15 & $1.5$                & 1.42 & --- & $<1$ \\
+$0.2$ & 269 & 18 & $O(\epsmach)$        & 1.25 & 2789 & \textbf{22.4} \\
+$0.1$ & 353 & 18 & $O(\epsmach)$        & 1.11 & 2789 & 17.6 \\
+\bottomrule
+\end{tabular}}
+\end{table}

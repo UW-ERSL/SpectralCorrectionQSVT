@@ -1,0 +1,26 @@
+% ---------------------------------------------------------------------
+% GENERATED FILE -- DO NOT EDIT BY HAND.
+% Produced by makeTables.py (tab_adaptive).  Edit that function and re-run:
+%     python makeTables.py adaptive
+% ---------------------------------------------------------------------
+\begin{table}[htbp]
+\centering\color{blue}
+\caption{Output of Algorithm~B at $\kap = 117.6$, $\gamma_{\max} = 2$.
+``Weyl 3'' is the synthetic spectrum $\lambda_k \sim k^{2/3}$. The tolerance
+$\varepsilon$ and the degree $d$ are outputs of the sweep. For the 2D operator $K_{\rm eff} < K$ because $\lambda_{j,k} = \lambda_{k,j}$ is
+degenerate and the duplicate constraints are removed losslessly; elsewhere every supplied
+eigenvalue is retained. Entries marked $O(\epsmach)$ sit at the double-precision floor,
+between one and a few hundred times unit roundoff depending on the degree and the LAPACK
+build.}
+\label{tab:adaptive}
+{\small\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lrrrrrrr}
+\toprule
+spectrum & $K$ & $\varepsilon$ & $d$ & $K_{\rm eff}$ & $R_K$ & $\gamma$ & $G$ \\
+\midrule
+1D     & 16 & $0.5$ & 155 & 16 & $O(\epsmach)$ & 1.94 & 30.9 \\
+2D     & 32 & $0.2$ & 269 & 18 & $O(\epsmach)$ & 1.25 & 22.4 \\
+Weyl 3 & 16 & $0.005$ & 705 & 16 & $O(\epsmach)$ & 0.95 & 7.9 \\
+\bottomrule
+\end{tabular}}
+\end{table}

@@ -1,0 +1,41 @@
+% ---------------------------------------------------------------------
+% GENERATED FILE -- DO NOT EDIT BY HAND.
+% Produced by makeTables.py (tab_qsvt_results).  Edit that function and re-run:
+%     python makeTables.py qsvt_results
+% ---------------------------------------------------------------------
+\begin{table*}[t]
+\centering
+\caption{QSVT results for the 1D Poisson equation, $N=16$,
+$\kappa=117.6$, $K=N$. \rev{The polynomial Algorithm~B returns} achieves unit fidelity and lower
+$e_C$ and $e_x$ than the tight base at $5.77\times$ lower
+circuit depth\rev{, and $5.80\times$ lower total query cost
+$\mathcal{Q} = d/\sqrt{P_{\rm succ}}$. Entries marked $O(\epsmach)$ sit at the
+double-precision floor.}}
+\label{tab:qsvt_results}
+{\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & $d$ & $F$ & $e_C$ & \rev{$e_x$}
+  & $P_{\rm succ}$ & \rev{$\mathcal{Q}$} \\
+\midrule
+\multicolumn{7}{l}{\textit{Uniform load}} \\
+\midrule
+\rev{$p_{SC}$, Algorithm~B}
+  & 155 & 1.000000 & $O(\epsmach)$ & \rev{$O(\epsmach)$} & \rev{0.5065} & \rev{\textbf{217.8}} \\
+\rev{$p_0$, same degree}
+  & 155 & 0.999748 & $4.93\times10^{-1}$ & \rev{$4.96\times10^{-1}$} & \rev{0.4874} & \rev{222.0} \\
+\rev{$p_0$, tight base}
+  & 895 & 1.000000 & $9.60\times10^{-4}$ & \rev{$9.83\times10^{-4}$} & \rev{0.5013} & \rev{1264.1} \\
+\midrule
+\multicolumn{7}{l}{\textit{Point load at midpoint}} \\
+\midrule
+\rev{$p_{SC}$, Algorithm~B}
+  & 155 & 1.000000 & $O(\epsmach)$ & \rev{$O(\epsmach)$} & \rev{0.0701} & \rev{\textbf{585.4}} \\
+\rev{$p_0$, same degree}
+  & 155 & 0.995655 & $4.47\times10^{-1}$ & \rev{$4.93\times10^{-1}$} & \rev{0.0687} & \rev{591.3} \\
+\rev{$p_0$, tight base}
+  & 895 & 1.000000 & $7.30\times10^{-4}$ & \rev{$9.80\times10^{-4}$} & \rev{0.0694} & \rev{3397.8} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}

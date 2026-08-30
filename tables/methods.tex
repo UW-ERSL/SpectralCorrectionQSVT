@@ -1,0 +1,30 @@
+% ---------------------------------------------------------------------
+% GENERATED FILE -- DO NOT EDIT BY HAND.
+% Produced by makeTables.py (tab_methods).  Edit that function and re-run:
+%     python makeTables.py methods
+% ---------------------------------------------------------------------
+\begin{table}[htbp]
+\centering
+\caption{\rev{The four constructions ranked on six measures, $1$ best. From the 2D Poisson
+operator with $N = 256$, $\kap = 116.5$ and $K = 32$ supplied eigenvalues, each
+construction taken to the degree at which it first matches the guarantee of the base
+polynomial. Accuracy is the relative solution error on the least favourable of three loads;
+classical cost is the time to build the polynomial given the eigenvalues; quantum cost is
+$d\,\tau$; demands is what the construction requires of the user.}}
+\label{tab:methods}
+{\setlength{\tabcolsep}{4pt}\small
+\begin{tabular}{lccccccc}
+\toprule
+ & \multicolumn{7}{c}{rank} \\
+\cmidrule(lr){2-8}
+ & \rotatebox{90}{accuracy} & \rotatebox{90}{$\gamma$} & \rotatebox{90}{classical cost}
+ & \rotatebox{90}{quantum cost} & \rotatebox{90}{demands} & \rotatebox{90}{robustness}
+ & \rotatebox{90}{sum} \\
+\midrule
+Spectral Polynomial  & 1 & 4 & 2 & 3 & 4 & 4 & 18 \\
+Spectral Correction  & 3 & 2 & 1 & 4 & 1 & 2 & 13 \\
+Spectral Separation  & 2 & 3 & 3 & 1 & 3 & 3 & 15 \\
+Spectral Constraint  & 4 & 1 & 4 & 2 & 1 & 1 & 13 \\
+\bottomrule
+\end{tabular}}
+\end{table}
