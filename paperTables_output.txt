@@ -1,0 +1,208 @@
+
+========================================================================================================
+TABLE 2  Degree vs eigenvalue residual, base p0 (ChebIter) and p_SC
+========================================================================================================
+  N = 4, kappa = 9.5669, K = 2, lambda = [0.1045 0.3782 0.7164 0.9901]
+  Method                         eps     d   Eeig (K corr.)    Eeig (all N)
+  p0  (ChebIter)                 0.2    21         1.97e-01        1.97e-01
+  p_SC (K=2)                     0.2    21         3.33e-16        2.80e-01
+  p0  (ChebIter)                 0.1    29         8.58e-02        8.58e-02
+  p_SC (K=2)                     0.1    29         2.22e-16        3.72e-02
+  p0  (ChebIter)                0.01    51         8.55e-03        8.55e-03
+  p_SC (K=2)                    0.01    51         2.22e-16        6.58e-03
+
+====================================================================================================================
+TABLE 3  QSVT, 1D Poisson, m=4, base=ChebIter, K=N=16, eps_loose=0.5, eps_tight=0.001
+====================================================================================================================
+
+  uniform load   (kappa = 117.63)
+  Method                         d   Fidelity          e_C          e_x   P_succ    bound      tau  d/sqrt(P)
+  p0   (eps=0.5)               155   0.999748     4.93e-01     4.96e-01   0.4874   2.2342     78.7      222.0
+  p0   (eps=0.001)             895   1.000000     9.60e-04     9.83e-04   0.5013   0.5857    153.7     1264.1
+  p_SC (eps=0.5)               155   1.000000     3.65e-14     3.54e-14   0.5065   0.5906    153.1      217.8
+    depth ratio        tight/spectral = 5.77x
+    query-cost ratio   tight/spectral = 5.80x
+
+  delta load   (kappa = 117.63)
+  Method                         d   Fidelity          e_C          e_x   P_succ    bound      tau  d/sqrt(P)
+  p0   (eps=0.5)               155   0.995655     4.47e-01     4.93e-01   0.0687   2.2342     78.7      591.3
+  p0   (eps=0.001)             895   1.000000     7.30e-04     9.80e-04   0.0694   0.5857    153.7     3397.8
+  p_SC (eps=0.5)               155   1.000000     5.28e-14     4.24e-14   0.0701   0.5906    153.1      585.4
+    depth ratio        tight/spectral = 5.77x
+    query-cost ratio   tight/spectral = 5.80x
+
+========================================================================================================
+TABLE 4  Robustness to eigenvalue perturbation, 1D Poisson, m=4, base=ChebIter, K=N=16, eps=0.5, 60 trials, seed=42
+(same problem, base and eps as Table 3 -- eta=0 row MUST match Table 3)
+========================================================================================================
+       eta                 Fidelity                        e_C                        e_x    P_succ     K_eff
+       0.0                 1.000000                   3.65e-14                   3.54e-14    0.5065        16
+      0.01     0.999993 +/- 4.1e-06       4.14e-03 +/- 5.0e-03       5.52e-03 +/- 4.5e-03    0.5062        16
+       0.1     0.999529 +/- 5.6e-04       4.59e-02 +/- 4.8e-02       5.41e-02 +/- 4.3e-02    0.5080     14-16
+       0.2     0.998733 +/- 1.6e-03       6.29e-02 +/- 7.5e-02       7.54e-02 +/- 6.7e-02    0.5175     14-16
+
+========================================================================================================
+TABLE 5  QSVT, 2D Poisson, N1=16, N=256, base=ChebIter, eps=0.2
+========================================================================================================
+  kappa = 117.63, classical peak = 0.1044
+     K  K_eff     d    Fidelity  RelComplErr   P_succ    bound      tau     peak  peak err
+     0      0   269   0.9993690     1.89e-01   0.6978   1.4625     97.3   0.1024    -1.97%   [5s]
+     1      1   269   0.9999502     3.78e-04   0.7132   0.9633    119.8   0.1059     1.43%   [5s]
+     4      3   269   0.9998105     4.60e-03   0.6952   0.9408    121.3   0.1077     3.17%   [4s]
+     8      5   269   0.9999739     6.93e-04   0.6933   0.9363    121.6   0.1055     1.01%   [4s]
+    16     10   269   0.9999931     4.94e-04   0.6926   0.9355    121.6   0.1049     0.47%   [4s]
+    32     18   269   0.9999530     1.50e-04   0.6939   0.9373    121.5   0.1037    -0.72%   [5s]
+
+========================================================================================================
+TABLE 8  Output of the two-stage algorithm (Sec. 4.3), gamma_max = 2.
+eps and d are OUTPUTS of the sweep, not inputs.
+========================================================================================================
+  spectrum    K     eps     d  Keff        R_K  gamma      G
+  1D         16     0.5   155    16    3.0e-14   1.94   30.9
+  2D         32     0.2   269    18    2.4e-14   1.25   22.4
+  Weyl 3     16   0.005   705    16    1.8e-15   0.95    7.9
+
+  As the spectrum crowds, the sweep tightens eps and raises d; every
+  supplied eigenvalue is retained (2D: K_eff < K from exact degeneracy).
+
+========================================================================================================
+TABLE 6  2D Poisson cost at MATCHED solution accuracy, eps=0.2, K=16
+========================================================================================================
+  method                           d      tau   P_succ         Q         rho
+  p_0  (eps=0.2)                 269     97.1   0.7004     321.4   1.985e-01
+  p_SC (eps=0.2, K=16)           269    121.4   0.6951     322.6   2.633e-03
+  p_0  (matched accuracy)        781    144.4   0.4885    1117.4   2.589e-03
+
+  K_eff = 10;  depth ratio = 2.90x;  query-cost ratio = 3.46x
+
+========================================================================================================
+TABLE 9  Relative solution error on the 2D Poisson operator, three loads.
+REBUTTAL ONLY -- the paper carries the point-load result as two sentences in
+Sec. 6.1; the full table supports the response on when the method helps.
+Sec. 4.3 reads only the spectrum, so eps, d and G are identical in every row.
+========================================================================================================
+  load        K    eps     d  Keff      G      E_out   r_out      rho_0     rho_SC  rho_0 sim rho_SC sim
+  uniform    32    0.2   269    18   22.4    2.8e-05    1.29   1.99e-01   6.86e-03   1.99e-01   6.86e-03
+  random     32    0.2   269    18   22.4    1.3e-04    1.60   1.99e-01   1.85e-02   1.99e-01   1.85e-02
+  delta      16    0.2   269    10   22.4    3.1e-02    0.21   1.89e-01   3.72e-02   1.89e-01   3.72e-02
+  delta      32    0.2   269    18   22.4    2.0e-02    1.65   1.89e-01   2.35e-01   1.89e-01   2.35e-01
+
+  rho = sqrt(E_out) * r_out exactly.  The point load spreads energy across
+  the spectrum: at K = 32 the correction raises rho above the base.
+
+==============================================================================================================
+NON-MONOTONIC FIDELITY IN K -- mode-resolved explanation, 2D Poisson
+REBUTTAL ONLY -- the paper states the mechanism qualitatively in Sec. 5.3.8;
+the Var_w(r) vs 1-F match below is the evidence, carried in the rebuttal.
+==============================================================================================================
+  Load energy concentration (uniform load): mode 1 carries 99.05% of ||A^-1 b||^2;
+  the 10 lowest modes carry 99.93%; the 32 lowest carry 100.00%.
+
+  Writing r(lam) = lam p(lam) - 1, the QSVT state is the exact solution
+  modulated mode-by-mode by (1 + r).  A CONSTANT r is a pure rescaling and
+  costs no fidelity at all; only the SPREAD of r across energy-carrying modes
+  does.  To second order  1 - F  ~=  energy-weighted variance of r.
+
+     K  Keff   1-F (pred)  1-F (2nd order)     mean r      std r    |r|_rms    |r|_max
+     0     0    6.310e-04        4.067e-04 -1.975e-01  2.017e-02  1.985e-01  1.994e-01
+     1     1    4.980e-05        4.980e-05 -8.065e-06  7.057e-03  7.057e-03  3.072e-01
+     2     2    5.075e-05        5.073e-05 -2.097e-04  7.123e-03  7.126e-03  2.808e-01
+     3     2    5.075e-05        5.073e-05 -2.097e-04  7.123e-03  7.126e-03  2.808e-01
+     4     3    1.895e-04        1.892e-04 -1.066e-03  1.375e-02  1.380e-02  2.717e-01
+     6     4    3.018e-05        3.019e-05  7.880e-05  5.494e-03  5.495e-03  2.444e-01
+     8     5    2.607e-05        2.608e-05  7.536e-05  5.107e-03  5.107e-03  2.311e-01
+    12     8    3.025e-05        3.026e-05  8.535e-05  5.501e-03  5.501e-03  2.375e-01
+    16    10    6.935e-06        6.934e-06 -2.392e-05  2.633e-03  2.633e-03  2.572e-01
+    24    14    1.393e-05        1.393e-05 -2.509e-05  3.732e-03  3.732e-03  1.102e+00
+    32    18    4.705e-05        4.705e-05 -8.381e-06  6.859e-03  6.859e-03  3.839e+00
+    48    27    5.918e-01        1.463e+00  4.522e-03  1.210e+00  1.210e+00  3.514e+02
+
+  READING.  The base polynomial p0 has a LARGE but nearly UNIFORM residual
+  across the energy-carrying modes (mean r = -0.197, std r 2.0e-02), which is almost a pure
+  rescaling -- hence its deceptively high fidelity 0.99937 despite a
+  20% error.  Correcting a single eigenvalue sets r = 0 on the mode
+  carrying 99% of the energy while leaving r ~ -0.20 on the rest: the MEAN
+  improves by orders of magnitude but the SPREAD grows, so fidelity DROPS.
+  Fidelity only recovers once K covers essentially all energy-carrying modes.
+
+  CONSEQUENCE FOR THE PAPER: fidelity is a poor headline metric here because
+  it is blind to the uniform part of the error.  The relative compliance error
+  (Table 5) is sensitive to it; it is NOT monotone in K, and the useful
+  statement is the improvement at the K the adaptive algorithm selects.
+
+========================================================================================================
+TABLE 1  Pure spectral polynomial, 1D Poisson (uniform load)
+REBUTTAL ONLY -- the paper no longer carries this table; the rebuttal
+uses it to show P_succ = ||A^-1 b||^2/tau^2 for the exact interpolant.
+P_succ is now ||p(A)b||^2/tau^2; the bound column is kappa^2/tau^2.
+========================================================================================================
+
+  m = 3  (N = 8, kappa = 32.4851, ||A^-1 b|| = 30.727)
+   n_f     d  tau/kappa    P_succ  kappa^2/tau^2  ||Ainv b||^2/tau^2          F   OK
+     2    31      1.413    0.4483         0.5011              0.4483   1.000000  yes
+     3    47      1.248    0.5748         0.6425              0.5748   1.000000  yes
+     4    63      1.010    0.8765         0.9796              0.8765   1.000000  yes
+     5    79      1.012    0.8736         0.9764              0.8736   1.000000  yes
+     8   127      1.002    0.8912         0.9961              0.8912   1.000000  yes
+
+  m = 4  (N = 16, kappa = 117.6258, ||A^-1 b|| = 108.927)
+   n_f     d  tau/kappa    P_succ  kappa^2/tau^2  ||Ainv b||^2/tau^2          F   OK
+     2    63     28.535    0.0011         0.0012              0.0011   1.000000  yes
+     3    95      1.628    0.3237         0.3775              0.3237   1.000000  yes
+     4   127      1.390    0.4439         0.5177              0.4439   1.000000  yes
+     5   159      1.302    0.5062         0.5903              0.5062   1.000000  yes
+     8   255      1.002    0.8544         0.9963              0.8544   1.000000  yes
+
+========================================================================================================
+DEGREE SCALING  minimum degree d(kappa, eps) -- REBUTTAL ONLY (R2 Technical 4).
+The paper uses the single base p0 = ChebIter; the other two families appear
+here only to show the linear kappa-dependence is family-independent.
+Fitting log d = c + alpha log kappa at fixed eps.  alpha ~ 1 => Theta(kappa),
+alpha ~ 0.5 => Theta(sqrt(kappa)).
+========================================================================================================
+
+  eps = 0.1
+     kappa     ChebIter d        Mang d  Sunderhauf d
+        10             29            35            47
+        20             59            69           107
+        40            119           139           241
+        80            239           271           535
+       160            479           519          1181
+       320            957           975          2583
+        chebiter: fitted exponent alpha = 1.008
+            mang: fitted exponent alpha = 0.963
+      sunderhauf: fitted exponent alpha = 1.156
+
+  eps = 0.01
+     kappa     ChebIter d        Mang d  Sunderhauf d
+        10             53            61            69
+        20            105           119           153
+        40            211           235           333
+        80            423           451           719
+       160            847           881          1549
+       320           1695          1771          3321
+        chebiter: fitted exponent alpha = 1.001
+            mang: fitted exponent alpha = 0.969
+      sunderhauf: fitted exponent alpha = 1.116
+
+========================================================================================================
+SPECTRAL EXTENSION vs SPECTRAL CORRECTION -- polynomial level, 2D Poisson spectrum
+Addresses the non-monotonic small-K behaviour: correction perturbs shared
+coefficients and can degrade UNcorrected eigenvalues; extension cannot.
+========================================================================================================
+  kappa = 117.63, base chebiter d0 = 269, base max residual over all 256 eigenvalues = 1.994e-01
+     K  Keff |                   CORRECTION (d fixed) |                      EXTENSION (d grows)
+             |     d  E(targeted)  E(full spec)   |dc| |     d  E(targeted)  E(full spec)     cond
+     1     1 |   269     6.66e-16      3.07e-01   2.59 |   271     4.44e-15      2.95e+01  1.0e+00
+     4     3 |   269     4.88e-15      2.72e-01   2.90 |   275     8.85e-11      1.63e+05  1.5e+04
+     8     5 |   269     4.77e-15      2.31e-01   2.94 |   279     1.39e-08      1.66e+07  1.1e+07
+    16    10 |   269     5.66e-15      2.57e-01   2.99 |   289     1.50e-01      3.90e+07  6.1e+12
+    32    18 |   269     2.40e-14      3.84e+00   5.38 |   305     1.50e-01      5.88e+07  3.5e+15
+
+  E(targeted)  = max residual at the K_eff targeted eigenvalues
+  E(full spec) = max residual over ALL 256 eigenvalues (this drives fidelity)
+  NOTE: the extension system is a square K_eff x K_eff solve in the
+  HIGHEST-order Chebyshev terms evaluated near x = 1/kappa, where those
+  terms are nearly linearly dependent -- hence the conditioning blow-up.
+
+Total wall time: 465s
