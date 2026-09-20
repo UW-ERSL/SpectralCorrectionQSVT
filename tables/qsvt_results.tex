@@ -1,0 +1,45 @@
+% ---------------------------------------------------------------------
+% GENERATED FILE -- DO NOT EDIT BY HAND.
+% Produced by makeTables.py (tab_qsvt_results).  Edit that function and re-run:
+%     python makeTables.py qsvt_results
+% ---------------------------------------------------------------------
+\begin{table*}[t]
+\centering
+\caption{QSVT results for the 1D Poisson equation, $N=16$,
+$\kappa=117.6$, $K=N$. \rev{The second row is the base polynomial of equal
+cost $d\,\tau$, not of equal degree: the correction inflates the subnormalization by
+$\gamma = 1.11$, so equal degree would quietly be the cheaper comparison.
+Matching $d\,\tau$ does not match $P_{\rm succ}$, and the correction wins on that too, so
+the realised $\mathcal{Q} = d/\sqrt{P_{\rm succ}}$ of that base is a further
+$1.08\times$ higher. Against it the correction is exact on the
+whole spectrum, $K$ being $N$ here, and its solution error falls to the double-precision
+floor. It also reaches an accuracy the tight base does not, at
+$3.35\times$ less query cost. Entries marked $O(\epsmach)$ sit at that floor.}}
+\label{tab:qsvt_results}
+{\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & $d$ & $F$ & $e_C$ & \rev{$e_x$}
+  & $P_{\rm succ}$ & \rev{$\mathcal{Q}$} \\
+\midrule
+\multicolumn{7}{l}{\textit{Uniform load}} \\
+\midrule
+\rev{$p_{SC}$, Algorithm~B}
+  & 349 & 1.000000 & $O(\epsmach)$ & \rev{$O(\epsmach)$} & \rev{0.8537} & \rev{\textbf{377.7}} \\
+\rev{$p_0$, same $d\,\tau$}
+  & 377 & 0.999959 & $7.83\times10^{-2}$ & \rev{$8.03\times10^{-2}$} & \rev{0.8506} & \rev{408.8} \\
+\rev{$p_0$, tight base}
+  & 895 & 1.000000 & $9.60\times10^{-4}$ & \rev{$9.83\times10^{-4}$} & \rev{0.5013} & \rev{1264.1} \\
+\midrule
+\multicolumn{7}{l}{\textit{Point load at midpoint}} \\
+\midrule
+\rev{$p_{SC}$, Algorithm~B}
+  & 349 & 1.000000 & $O(\epsmach)$ & \rev{$O(\epsmach)$} & \rev{0.1182} & \rev{\textbf{1015.3}} \\
+\rev{$p_0$, same $d\,\tau$}
+  & 377 & 0.999635 & $6.12\times10^{-2}$ & \rev{$8.02\times10^{-2}$} & \rev{0.1182} & \rev{1096.4} \\
+\rev{$p_0$, tight base}
+  & 895 & 1.000000 & $7.30\times10^{-4}$ & \rev{$9.80\times10^{-4}$} & \rev{0.0694} & \rev{3397.8} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table*}
