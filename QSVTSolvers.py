@@ -101,8 +101,11 @@ class StandardQSVT:
         self.ancilla_qubits = 1
         self.degree_override = degree_override
         self.real_part = real_part
+        # _get_inverse_phases reads self.degree on the branch where neither a
+        # target error nor an override is supplied, so it must exist first.
+        self.degree = None
 
-        # ── Polynomial method selection ───────────────────────────────
+        # -- Polynomial method selection -------------------------------
         if polyMethod.lower() == 'sunderhauf':
             self.polyMethod = SunderhaufPolynomial
         elif polyMethod.lower() == 'mang':
@@ -111,11 +114,11 @@ class StandardQSVT:
             self.polyMethod = ChebIterPolynomial
         else:
             raise ValueError(f"Unknown polyMethod '{polyMethod}'.")
- 
+
         if kappa is None:
             s = np.linalg.svd(A, compute_uv=False)
             self.kappa = s[0] / s[-1]
-            print(f"Computed κ = {self.kappa:.4f}")
+            print(f"Computed kappa = {self.kappa:.4f}")
         else:
             self.kappa = kappa
 
@@ -133,17 +136,27 @@ class StandardQSVT:
     def _get_inverse_phases(self, kappa, target_error=None):
         a = 1.0 / kappa
 
-        
+
         if self.degree_override is not None:
-            degree = self.degree_override
+            degree = int(self.degree_override) | 1     # QSVT needs an odd degree
+            self.degree = degree                       # was never set on this
+            #                                            branch until 2026-08-31
         elif target_error is not None:
             degree = self.polyMethod.mindegree(target_error, a)
             self.degree = degree
-        else:
-            degree = max(self.degree, 1)
+        elif self.degree is not None:
+            # re-solve at a degree the caller set on the instance
+            degree = max(int(self.degree), 1)
             if degree % 2 == 0:
                 degree += 1
-           
+            self.degree = degree
+        else:
+            raise ValueError(
+                "StandardQSVT: no degree specified. Pass target_error=... to "
+                "size the degree from the accuracy wanted, or degree_override=... "
+                "to fix it directly (for a hardware depth budget, or to match a "
+                "degree Algorithm B returned).")
+
 
         poly = self.polyMethod.poly(degree, a)
         achieved_error = None # placeholder; self.polyMethod.error_for_degree(degree, a)
@@ -216,8 +229,8 @@ class StandardQSVT:
         One would use effcient block-encoding constructions for sparse or structured A, but here we
         build the (2N x 2N) block-encoding unitary matching pyqsp's Wx signal:
 
-            U_BE = [[ A,                i*sqrt(I - A A†) ],
-                    [ i*sqrt(I - A†A),       A†          ]]
+            U_BE = [[ A,                i*sqrt(I - A A^dag) ],
+                    [ i*sqrt(I - A^dag A),       A^dag      ]]
 
         This ensures the effective 2x2 sub-unitary for each singular value
         sigma_i is exactly W_pyqsp(sigma_i) = [[sigma_i, i*sqrt(1-sigma_i^2)], ...].
@@ -247,7 +260,7 @@ class StandardQSVT:
         Apply P(phi) = diag(e^{i*phi}, e^{-i*phi}) on the ancilla.
 
         Qiskit Rz(theta) = diag(e^{-i*theta/2}, e^{+i*theta/2})
-        => Rz(-2*phi)    = diag(e^{+i*phi},      e^{-i*phi})     ✓
+        => Rz(-2*phi)    = diag(e^{+i*phi},      e^{-i*phi})     OK
         """
         circuit.rz(-2.0 * phi, anc_qubit)   # Z-rotation, NOT X-rotation
 
@@ -421,7 +434,7 @@ class StandardQSVT:
             Post-selection probability P = ||sv[0::2]||^2  (complex norm, includes
             both the real/target part and the imaginary QSP-completion part).
         norm_real : float
-            ||Re(sv[0::2])||  — the real-part norm only.  Use this (not
+            ||Re(sv[0::2])||  -- the real-part norm only.  Use this (not
             sqrt(success_prob)) to recover the physical compliance:
 
                 C_qsvt = (b @ u_dir) * solver.tau * norm_real
@@ -441,7 +454,7 @@ class StandardQSVT:
         if not self.dataOK:
             return None
 
-        # ── real-part-extracting circuit (default) ────────────────────
+        # -- real-part-extracting circuit (default) --------------------
         # Post-selection on the QSP ancilla in |+> projects onto p(A)|b>
         # exactly, so the measured probability IS ||p(A)b||^2 / tau^2 and no
         # post-processing of the returned state is required.
@@ -534,7 +547,7 @@ class PureSpectralQSVT(StandardQSVT):
         # which triggers _get_inverse_phases
         self._spectral_poly = SpectralPolynomial(self.eigenvalues,
                                                   n_factor=n_factor)
-        # Don't pass polyMethod to super — we override _get_inverse_phases
+        # Don't pass polyMethod to super - we override _get_inverse_phases
         # Pass a dummy polyMethod to satisfy the base class
         super().__init__(A, b, kappa=kappa, polyMethod='Mang', **kwargs)
 
@@ -576,21 +589,22 @@ class SpectrallyBootstrappedQSVT(StandardQSVT):
         Override: build base polynomial, apply hybrid correction,
         then proceed with normalisation and QSP phase computation.
         """
-        
+
 
         a  = 1.0 / kappa
         if self.degree_override is not None:
-            degree = self.degree_override
-        else:
+            degree = int(self.degree_override) | 1
+        elif target_error is not None:
             degree = self.polyMethod.mindegree(target_error, a)
-
-        print("degree override: ", self.degree_override)
-        print("computed degree: ", degree)
+        else:
+            raise ValueError(
+                "SpectrallyBootstrappedQSVT: no degree specified. Pass "
+                "target_error=... or degree_override=...")
         self.degree = degree
-        # ── base polynomial ───────────────────────────────────────────
+        # -- base polynomial -------------------------------------------
         p0 = self.polyMethod.poly(degree, a)
 
-        # ── spectral correction ───────────────────────────────────────
+        # -- spectral correction ---------------------------------------
         c_corr, info  = spectral_correction(p0, self.lam_K, rcond=self.rcond,
                                             merge_rtol=self.merge_rtol,
                                             return_info=True)

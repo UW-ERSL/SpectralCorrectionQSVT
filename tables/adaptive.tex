@@ -5,22 +5,25 @@
 % ---------------------------------------------------------------------
 \begin{table}[htbp]
 \centering\color{blue}
-\caption{Output of Algorithm~B at $\kap = 117.6$, $\gamma_{\max} = 2$.
-``Weyl 3'' is the synthetic spectrum $\lambda_k \sim k^{2/3}$. The tolerance
-$\varepsilon$ and the degree $d$ are outputs of the sweep. For the 2D operator $K_{\rm eff} < K$ because $\lambda_{j,k} = \lambda_{k,j}$ is
-degenerate and the duplicate constraints are removed losslessly; elsewhere every supplied
-eigenvalue is retained. Entries marked $O(\epsmach)$ sit at the double-precision floor,
-between one and a few hundred times unit roundoff depending on the degree and the LAPACK
-build.}
+\caption{Output of Algorithm~B at $\varepsilon = 0.2$, $\gamma_{\max} = 2$.
+``3D'' is the $16^3$ operator, $N = 4096$, whose $\kap$ matches the 2D case. The tolerance $\varepsilon$
+is an input: it fixes the guarantee, $d_0$ being the degree the base needs to meet it.
+The degree $d$ is the output, the smallest at which the certificate of Equation
+\eqref{eq:certificate} falls to that of the base. For the 2D operator
+$K_{\rm eff} < K$ because $\lambda_{j,k} = \lambda_{k,j}$ is degenerate and the duplicate
+constraints are removed losslessly; elsewhere every supplied eigenvalue is retained.
+Entries marked $O(\epsmach)$ are cases where the correction is exact on the whole
+spectrum, so the solution error reaches the double-precision floor and a ratio against it
+carries no information.}
 \label{tab:adaptive}
 {\small\setlength{\tabcolsep}{2.5pt}
 \begin{tabular}{lrrrrrrr}
 \toprule
-spectrum & $K$ & $\varepsilon$ & $d$ & $K_{\rm eff}$ & $R_K$ & $\gamma$ & $G$ \\
+spectrum & $K$ & $d_0$ & $d$ & $K_{\rm eff}$ & $\gamma$ & certificate & $G$ \\
 \midrule
-1D     & 16 & $0.5$ & 155 & 16 & $O(\epsmach)$ & 1.94 & 30.9 \\
-2D     & 32 & $0.2$ & 269 & 18 & $O(\epsmach)$ & 1.25 & 22.4 \\
-Weyl 3 & 16 & $0.005$ & 705 & 16 & $O(\epsmach)$ & 0.95 & 7.9 \\
+1D     & 16 & 269 & 471 & 16 & 1.03 & $7.77\times10^{-2}$ & $O(\epsmach)$ \\
+2D     & 32 & 269 & 471 & 18 & 1.03 & $8.01\times10^{-2}$ & 10.9 \\
+3D     & 16 & 269 & 539 & 6 & 1.01 & $4.44\times10^{-2}$ & 1.7 \\
 \bottomrule
 \end{tabular}}
 \end{table}

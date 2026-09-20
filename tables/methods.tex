@@ -5,26 +5,21 @@
 % ---------------------------------------------------------------------
 \begin{table}[htbp]
 \centering
-\caption{\rev{The four constructions ranked on six measures, $1$ best. From the 2D Poisson
-operator with $N = 256$, $\kap = 116.5$ and $K = 32$ supplied eigenvalues, each
-construction taken to the degree at which it first matches the guarantee of the base
-polynomial. Accuracy is the relative solution error on the least favourable of three loads;
-classical cost is the time to build the polynomial given the eigenvalues; quantum cost is
-$d\,\tau$; demands is what the construction requires of the user.}}
+\caption{\rev{The four constructions on the three measures that decide the
+question, $1$ best, with ranks in parentheses. From the 2D Poisson operator with
+$N = 256$, $\kap = 117.6$ and $K = 32$
+supplied eigenvalues, at equal certified guarantee; Section~\ref{sec:comparison}
+reads the entries.}}
 \label{tab:methods}
-{\setlength{\tabcolsep}{4pt}\small
-\begin{tabular}{lccccccc}
+{\setlength{\tabcolsep}{3pt}\small
+\begin{tabular}{lcccc}
 \toprule
- & \multicolumn{7}{c}{rank} \\
-\cmidrule(lr){2-8}
- & \rotatebox{90}{accuracy} & \rotatebox{90}{$\gamma$} & \rotatebox{90}{classical cost}
- & \rotatebox{90}{quantum cost} & \rotatebox{90}{demands} & \rotatebox{90}{robustness}
- & \rotatebox{90}{sum} \\
+construction & $e_x$ & $d\,\tau$ & $\tilde\lambda_{K<N}$ & sum \\
 \midrule
-Spectral Polynomial  & 1 & 4 & 2 & 3 & 4 & 4 & 18 \\
-Spectral Correction  & 3 & 2 & 1 & 4 & 1 & 2 & 13 \\
-Spectral Separation  & 2 & 3 & 3 & 1 & 3 & 3 & 15 \\
-Spectral Constraint  & 4 & 1 & 4 & 2 & 1 & 1 & 13 \\
+Interpolation  & $\sim\!10^{-14}$~(1) & 90K~(4) & 4 & 9 \\
+Separation     & $\sim\!10^{-10}$~(2) & 66K~(3) & 3 & 8 \\
+Constraint     & $\sim\!10^{-2}$~(4) & 43K~(1) & 2 & 7 \\
+Correction     & $\sim\!10^{-3}$~(3) & 48K~(2) & 1 & 6 \\
 \bottomrule
 \end{tabular}}
 \end{table}

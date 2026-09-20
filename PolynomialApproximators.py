@@ -887,11 +887,46 @@ def _tau(p):
     return float(np.max(np.abs(p(_XGRID))))
 
 
+def certify(p, segments, deg, M=30000):
+    """RIGOROUS upper bound on max |x p(x) - 1| over a union of closed intervals.
+
+    Ehlich-Zeller: for a polynomial of degree D sampled at the M Chebyshev-Lobatto
+    points of an interval, which divide it into M-1 subintervals,
+    sup <= max_grid / cos(pi D / (2(M-1))), valid for M-1 > D.  Applied per
+    segment; the union bound is the max.  This is a THEOREM, not a fine grid.
+
+    The constant was cos(pi D / 2M) until 2026-09-17, which is the constant for
+    M-1 subintervals miscounted by one; the effect was below 1e-7 but the
+    inequality is stated as a theorem.  M was 9000 until the same date, at which
+    the factor reached 0.28% at d = 427; at M = 30000 it is below 0.03% for
+    d <= 430 and below 0.2% for d <= 2100.
+
+    It reads only the polynomial, so it cannot be fooled by wrong eigenvalues.
+    """
+    if M - 1 <= deg:
+        M = 4 * deg + 2
+    best = 0.0
+    y = np.cos(np.arange(M) * np.pi / (M - 1))
+    for lo, hi in segments:
+        if hi - lo < 1e-14:
+            continue
+        x = 0.5 * (lo + hi) + 0.5 * (hi - lo) * y
+        g = float(np.max(np.abs(x * p(x) - 1.0)))
+        best = max(best, g / np.cos(np.pi * deg / (2 * (M - 1))))
+    return best
+
+
 def correct_at_tolerance(poly_class, kappa, eigenvalues, epsilon,
                          gamma_max=2.0,
-                         c_grid=(0.0, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0)):
+                         c_grid=(0.0, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0),
+                         degree=None, target=None):
     """
-    ALGORITHM A -- verified correction at a GIVEN base tolerance.
+    ALGORITHM A -- verified and certified correction at a GIVEN base tolerance.
+
+    `degree`, when supplied, overrides d(epsilon) and fixes the degree directly.
+    Algorithm B uses that to raise the degree while holding the guarantee it is
+    trying to meet fixed; a caller with a hardware depth budget uses it the same
+    way.  `epsilon` is then carried through for reporting only.
 
     Builds p0 at d(epsilon) and sweeps the merge scale c from fine to coarse.
     A candidate is accepted when
@@ -913,24 +948,48 @@ def correct_at_tolerance(poly_class, kappa, eigenvalues, epsilon,
     failure mode as TRAP 4 in constrainedMinMax.py.
 
     The merge scale exists to drop eigenvalues the polynomial cannot RESOLVE,
-    not eigenvalues it finds inconvenient; the smallest verifying c is the only
-    selection consistent with that.
+    not eigenvalues it finds inconvenient.
+
+    Step 5 also tests the CERTIFICATE, and the returned candidate is the smallest
+    c that verifies AND certifies.  Verification alone is not enough, because it
+    is a statement about the constraints and not about the polynomial.  Measured
+    on the Weyl-3 spectrum at K = 64, d = 1077: c = 0 satisfies every constraint
+    to 1.6e-10 and passes gamma, so verification accepts it, but it does so with
+    ||dc|| = 2.83 against 2.0e-3 at c = 1 -- a correction fourteen hundred times
+    larger, which certifies 0.62 where the base certifies 0.20.  The constraints
+    at c = 0 are closer together than the degree can resolve, the solve is
+    ill-conditioned, and the polynomial is destroyed between the eigenvalues it
+    pins.  R_ret cannot see this; the certificate can.  At K = 16, d = 539 the
+    two rules differ by 43x in the accuracy gain G.
+
+    If no c certifies, the smallest VERIFYING c is returned with
+    certified=False, and the caller must not treat it as carrying the base's
+    guarantee.  The fallback is deliberately not "smallest certificate": that
+    would drive the sweep toward coarse merges, which certify better simply by
+    imposing fewer constraints -- the same failure as selecting on R_all.
 
     Use this directly when the degree is fixed by a hardware budget.  When it
-    is not, adaptive_spectral_correction sweeps epsilon and calls this at each
-    tolerance.
+    is not, adaptive_spectral_correction raises the degree and calls this at
+    each one.
 
     Returns a dict with 'epsilon', 'd', 'c', 'K_eff', 'R_ret', 'R_all',
-    'gamma', 'tau0' and 'dc', or None if no merge scale verifies.
+    'gamma', 'tau0', 'dc', 'p', 'certificate', 'target' and 'certified', or
+    None if no merge scale verifies.
     """
     a = 1.0 / kappa
     lam_in = np.asarray(eigenvalues, float)
-    d = poly_class.mindegree(epsilon, a)
+    d = int(poly_class.mindegree(epsilon, a)) if degree is None else int(degree) | 1
     p0 = poly_class.poly(d, a)
     n0 = len(p0.coef[1::2])
     tau0 = _tau(p0)
 
+    # the guarantee to beat: the base at d(epsilon), whatever degree we build at
+    if target is None:
+        d_ref = int(poly_class.mindegree(epsilon, a))
+        target = certify(poly_class.poly(d_ref, a), [(a, 1.0)], d_ref + 1)
+
     c_grid = tuple(sorted(c_grid))        # 'first acceptance' needs fine -> coarse
+    fallback = None
     for c in c_grid:
         lam, keff = merge_by_resolution(lam_in, n0, c)
         if keff < 1:
@@ -945,108 +1004,144 @@ def correct_at_tolerance(poly_class, kappa, eigenvalues, epsilon,
         R_ret = float(np.max(np.abs(lam * pSC(lam) - 1.0)))
         R_all = float(np.max(np.abs(lam_in * pSC(lam_in) - 1.0)))
         g = _tau(pSC) / tau0 if tau0 > 0 else np.inf
-        if R_ret <= _SQRT_EPS and g <= gamma_max:
-            return dict(epsilon=float(epsilon), d=int(d), c=float(c),
-                        K_eff=int(keff), R_ret=R_ret, R_all=R_all,
-                        gamma=float(g), tau0=float(tau0), dc=dc)
-    return None
+        if not (R_ret <= _SQRT_EPS and g <= gamma_max):
+            continue
+        t = certify(pSC, [(a, 1.0)], d + 1)
+        out = dict(epsilon=float(epsilon), d=int(d), c=float(c),
+                   K_eff=int(keff), R_ret=R_ret, R_all=R_all,
+                   gamma=float(g), tau0=float(tau0), dc=dc, p=pSC,
+                   certificate=float(t), target=float(target),
+                   certified=bool(t <= target))
+        if t <= target:
+            return out                    # smallest c that verifies AND certifies
+        if fallback is None:
+            fallback = out                # smallest c that merely verifies
+    return fallback
 
 
-def adaptive_spectral_correction(poly_class, kappa, eigenvalues,
-                                 gamma_max=2.0, eps_grid=None,
+def adaptive_spectral_correction(poly_class, kappa, eigenvalues, epsilon=0.2,
+                                 gamma_max=2.0, mult_grid=None,
                                  c_grid=(0.0, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0),
-                                 verbose=False):
+                                 margin=2.0, verbose=False):
     """
-    The two-stage algorithm of Sec. 4.3.
+    ALGORITHM B -- certified correction at a chosen margin.
 
-    STAGE 1 sweeps the base tolerance eps and returns the best corrected
-    polynomial for the supplied eigenvalues.  For each eps it builds p0 at
-    d(eps) and sweeps the merge scale c, accepting every c for which
+    The caller states the accuracy it wants as a base tolerance `epsilon`, and
+    supplies whatever eigenvalues it has.  Algorithm B returns the cheapest
+    corrected polynomial that is CERTIFIED to be at least as good as the base
+    polynomial the caller would otherwise have used.
 
-        (a) R_ret = max_{k <= K_eff} |lam_k p_SC(lam_k) - 1| <= sqrt(eps_mach)
-        (b) gamma = tau(p_SC) / tau(p_0)                     <= gamma_max
+    STAGE 1 fixes the guarantee.  Build the base p0 at d(epsilon) and certify it:
 
-    and among those, keeping the one with the smallest R_all.
+        t0 = certify(p0, [(a, 1)], d+1)   Ehlich-Zeller, a theorem, a posteriori
 
-    Tightening eps raises d, hence n0, hence the number of resolvable
-    constraints, so it buys accuracy only while more of the supplied set is
-    retained.  The sweep runs the whole grid and returns the best candidate,
-    stopping early only when R_all reaches machine precision, at which point
-    nothing is left to buy; eps is an OUTPUT of the procedure, not an input.
+    t0 is the guarantee the caller already has for free.  Nothing the correction
+    returns is allowed to be worse than it.
 
-    It does NOT stop at the first tolerance that fails to improve R_all, which
-    was the rule here until 2026-08-30.  R_all is not monotone in eps: raising
-    the degree admits more constraints, and the extra constraints can raise the
-    residual at the eigenvalues that were already pinned before the added ones
-    are all resolvable.  Measured on the Weyl-3 synthetic spectrum at kappa =
-    117.6, K = 16, R_all runs 0.203 (eps = 0.1, K_eff = 5), 0.238 (0.05,
-    K_eff = 10), 0.485 (0.02, K_eff = 11), 0.189 (0.01, K_eff = 13), then
-    1.1e-15 (0.005, K_eff = 16).  Halting on the first non-improvement returns
-    the eps = 0.1 candidate and reports G = 0.6, missing the saturating one at
-    eps = 0.005 that reports G = 7.9.  The full grid costs a few seconds and is
-    classical.
+    STAGE 2 buys it back with degree.  Sweep the degree upward from d(epsilon),
+    calling Algorithm A at each, and return the FIRST corrected polynomial whose
+    own certificate meets t0.  The correction pins the residual at the supplied
+    eigenvalues and lets it grow between them, so at d(epsilon) its certificate
+    is typically far ABOVE t0 -- measured 4.05 against 0.1996 on 2D Poisson and
+    5.40 against 0.2039 on the stiff inclusion.  Extra degree pulls it back down.
+    Iso-guarantee is reached at 1.4x to 1.5x the base degree in every case tested.
 
-    STAGE 2 asks what the uncorrected base family costs at the same accuracy.
-    The base residual on the spectrum equals its tolerance, so eps* = R_all and
-    d(eps*) follows by inverting the closed-form error relation -- one
-    evaluation, no search.  The inversion is floored at 1e-10, where the base
-    construction stalls in double precision, so G is a LOWER BOUND.
+    WHY THE CERTIFICATE AND NOT THE RESIDUAL.  Until 2026-08-31 Stage 2 set
+    eps* = R_K, the residual over the SUPPLIED eigenvalues, and reported a query
+    saving G = d(eps*) tau(eps*) / (d tau).  The correction enforces
+    lam_k p(lam_k) = 1 exactly, so R_K sits at machine precision BY
+    CONSTRUCTION: it measures the constraint being satisfied, not the polynomial
+    being good, and it is blind whenever K < N.  On 2D Poisson it reported
+    G = 22.4 with R_N = 3.84; on the stiff inclusion it reported G = 15.0 for a
+    polynomial whose point-load solution error was 5.8x WORSE than no correction
+    at all.  The certificate reads only the polynomial, so wrong eigenvalues
+    cannot flatter it.
 
-    Returns a dict with 'epsilon', 'd', 'K_eff', 'R_ret', 'R_all', 'gamma',
-    'Q_SC', 'eps_star', 'd_star', 'Q_0', 'G' and 'recommend'.
+    There is also nothing to buy on the old axis.  The base is minimax-optimal
+    for the relative criterion max|1 - x p(x)| on [a,1], so no perturbation of it
+    certifies lower there and a saving defined on the certificate is <= 1 always.
+    Depth was never what the constraints buy; they buy a residual that is small
+    WHERE THE SPECTRUM IS, which is accuracy.  The accuracy gain G at equal query
+    cost is defined in Sec. 3 and measured in `makeTables.py`; it needs the exact
+    solution, so it is a REPORTING metric and cannot be an objective here.
+
+    Returns a dict with 'epsilon', 'd', 'd_base', 'mult', 'c', 'K_eff', 'R_ret',
+    'R_all', 'gamma', 'tau0', 'p', 'certificate', 'target', 'certified' and
+    'history'.  When no degree on the grid certifies, the best candidate is
+    returned with certified=False; the caller must not use it as though it
+    carried the base's guarantee.
     """
     a = 1.0 / kappa
     lam_in = np.asarray(eigenvalues, float)
-    xs = _XGRID
-    if eps_grid is None:
-        eps_grid = (0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2,
-                    0.1, 0.05, 0.02, 0.01, 5e-3, 2e-3, 1e-3)
+    if mult_grid is None:
+        mult_grid = (1.0, 1.1, 1.25, 1.4, 1.5, 1.6, 1.75, 2.0, 2.25, 2.5, 3.0)
 
-    tau = _tau
+    # ---------------- Stage 1: the guarantee to match --------------------
+    d_base = int(poly_class.mindegree(epsilon, a))
+    p_base = poly_class.poly(d_base, a)
+    target = certify(p_base, [(a, 1.0)], d_base + 1)
 
-    # ---------------- Stage 1: sweep eps, calling Algorithm A ------------
+    # ---------------- Stage 2: raise the degree until certified ----------
+    # `margin` tightens the stopping test to t <= target/margin.  margin = 1 is
+    # iso-guarantee, the smallest degree provably no worse than the base.  It is
+    # not benefit-optimal: the certificate crosses early and keeps falling, while
+    # the accuracy gain peaks later, and on a crowded spectrum the two separate.
+    #
+    # The DEFAULT IS 2, a heuristic.  No single margin is best everywhere, and
+    # the reason is the accuracy of the supplied eigenvalues.  Measured G:
+    #
+    #   case                     m=1     m=2     m=4     m=8
+    #   1D Poisson K=N        O(mach) O(mach) O(mach) O(mach)
+    #   2D Poisson K=32/256      5.19   10.89   11.27   10.70
+    #   Weyl 3     K=16/1275     0.78    1.19    1.72    1.31
+    #   Weyl 3     K=64/1275     0.75    1.11    1.65    1.25
+    #   inclusion  K=8/289       3.01    2.28    1.44    1.44
+    #
+    # The three EXACT-eigenvalue cases improve with margin and peak at 2 to 4.
+    # The inclusion, whose supplied eigenvalues are 2.7% wrong, is best at
+    # margin 1 and degrades monotonically: extra degree makes the polynomial
+    # interpolate wrong points more precisely.  margin = 2 is optimal for none of
+    # them and better than margin = 1 for all but the inclusion, at 28-48% more
+    # d*tau.  Callers who know their eigenvalues are exact should raise it;
+    # callers who know they are not should lower it.
+    stop_at = target / float(margin)
     best, history = None, []
-    for eps in eps_grid:
-        cand = correct_at_tolerance(poly_class, kappa, lam_in, eps,
-                                    gamma_max=gamma_max, c_grid=c_grid)
-
-        history.append(dict(epsilon=float(eps), accepted=cand is not None,
-                            R_all=(cand['R_all'] if cand else None)))
+    for mult in mult_grid:
+        d = int(round(mult * d_base)) | 1
+        cand = correct_at_tolerance(poly_class, kappa, lam_in, epsilon,
+                                    gamma_max=gamma_max, c_grid=c_grid,
+                                    degree=d, target=target)
         if cand is None:
-            continue                          # tighten and retry
-        if best is None or cand['R_all'] < best['R_all']:
-            best = cand                       # R_all is not monotone in eps
-        if best['R_all'] <= _SQRT_EPS:
-            break                             # saturated: nothing left to buy
+            history.append(dict(mult=float(mult), d=d, verified=False,
+                                certificate=None))
+            continue
+        ct = cand['certificate']
+        history.append(dict(mult=float(mult), d=d, verified=True,
+                            K_eff=cand['K_eff'], certificate=float(ct)))
+        if best is None or ct < best[1]:
+            best = (cand, ct, mult)
+        if ct <= stop_at:
+            best = (cand, ct, mult)
+            break
 
     if best is None:
-        raise RuntimeError("adaptive_spectral_correction: no tolerance on the "
-                           "grid yields a verified correction")
+        raise RuntimeError("adaptive_spectral_correction: no degree on the grid "
+                           "yields a verified correction")
 
-    # ---------------- Stage 2 -------------------------------------------
-    eps_star = max(best['R_all'], _Q_FLOOR)
-    d_star = poly_class.mindegree(eps_star, a)
-    tau_star = tau(poly_class.poly(d_star, a))
-
-    Q_SC = best['d'] * best['gamma'] * best['tau0']
-    Q_0 = d_star * tau_star
-    G = Q_0 / Q_SC
-
-    out = dict(best)
-    out.pop('dc')
-    out.update(dc=best['dc'], Q_SC=float(Q_SC), eps_star=float(eps_star),
-               d_star=int(d_star), tau_star=float(tau_star), Q_0=float(Q_0),
-               G=float(G), recommend=bool(G > 1.0),
-               floored=bool(best['R_all'] < _Q_FLOOR), history=history)
+    cand, ct, mult = best
+    out = dict(cand)
+    out.update(d_base=int(d_base), mult=float(mult),
+               certificate=float(ct), target=float(target),
+               margin=float(margin), stop_at=float(stop_at),
+               certified=bool(ct <= target), history=history)
     if verbose:
-        print(f"  Stage 1: eps={out['epsilon']:<5} d={out['d']:<5} "
-              f"K_eff={out['K_eff']:<4} R_all={out['R_all']:.2e} "
-              f"gamma={out['gamma']:.2f}  Q_SC={Q_SC:.0f}")
-        print(f"  Stage 2: eps*={eps_star:.2e} d*={d_star:<5} "
-              f"Q_0={Q_0:.0f}  G={G:.1f}  "
-              f"{'correct' if G > 1 else 'use the base polynomial'}"
-              f"{'  (G is a lower bound)' if out['floored'] else ''}")
+        print(f"  Stage 1: base d({epsilon}) = {d_base}, "
+              f"certificate {target:.4f}")
+        print(f"  Stage 2: d = {out['d']} ({mult:g}x)  K_eff = {out['K_eff']}  "
+              f"gamma = {out['gamma']:.2f}  certificate {ct:.4f}  "
+              f"{'CERTIFIED' if out['certified'] else 'NOT certified'}")
     return out
+
 
 
 def spectral_extension(p0: Chebyshev, eigenvalues: np.ndarray,

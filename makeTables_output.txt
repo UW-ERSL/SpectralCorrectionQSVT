@@ -1,11 +1,23 @@
 
 ========================================================================================================
-tab:methods  (Sec. 3.5)  --  STATIC, not computed
+tab:methods  (Sec. 3.5)  four constructions at iso-guarantee, 2D Poisson, K = 32, eps = 0.2
 ========================================================================================================
-  Spectral Polynomial    1  4  2  3  4  4   sum 18
-  Spectral Correction    3  2  1  4  1  2   sum 13
-  Spectral Separation    2  3  3  1  3  3   sum 15
-  Spectral Constraint    4  1  4  2  1  1   sum 13
+  N = 256, kappa = 117.6, base d(eps) = 269, n_0 = 135, K/n_0 = 0.237
+  base certificate 0.1996, tau 97.1, d*tau 26115, worst-load e_x 1.985e-01
+  construction            mult     d      cert  gamma    d*tau  worst e_x  build s
+  Spectral Interpolation   n/a   767 1.679e+00   1.22    90499  1.246e-14     0.01
+  Spectral Separation      2.0   539 1.495e-01   0.99    65669  5.937e-10    12.75
+  Spectral Constraint     1.35   363 1.995e-01   1.10    42719  1.965e-02     5.33
+  Spectral Correction      1.5   405 1.458e-01   1.07    48067  6.398e-03     0.05
+
+  construction            worst e_x  r    d*tau  r few approx lam   sum
+  Spectral Interpolation  1.246e-14  1    90499  4           4     9
+  Spectral Separation     5.937e-10  2    65669  3           3     8
+  Spectral Constraint     1.965e-02  4    42719  1           2     7
+  Spectral Correction     6.398e-03  3    48067  2           1     6
+
+  lowest rank sum: Spectral Correction
+  build times: Interpolation 0.01s, Separation 12.75s, Constraint 5.33s, Correction 0.05s
   [wrote tables\methods.tex]
 
 ========================================================================================================
@@ -14,59 +26,67 @@ tab:degree_accuracy  (Sec. 5.1.2)  Degree vs eigenvalue residual
   N = 4, kappa = 9.5669, K = 2, lambda = [0.1045 0.3782 0.7164 0.9901]
   method       eps     d          R_K          R_N
   p0           0.2    21     1.97e-01     1.97e-01
-  p_SC         0.2    21     3.33e-16     2.80e-01
+  p_SC         0.2    21     6.66e-16     2.80e-01
   p0           0.1    29     8.58e-02     8.58e-02
   p_SC         0.1    29     2.22e-16     3.72e-02
   p0          0.01    51     8.55e-03     8.55e-03
   p_SC        0.01    51     2.22e-16     6.58e-03
   [wrote tables\degree_accuracy.tex]
 
-========================================================================================================
-tab:adaptive  (Sec. 5.1.3)  Algorithm B, gamma_max = 2.0
-eps and d are OUTPUTS of the sweep, not inputs.
-========================================================================================================
-  spectrum    K     eps     d  Keff        R_K  gamma      G
-  1D         16     0.5   155    16    3.0e-14   1.94   30.9
-  2D         32     0.2   269    18    2.4e-14   1.25   22.4
-  Weyl 3     16   0.005   705    16    1.8e-15   0.95    7.9
+==================================================================================================================================
+tab:adaptive  (Sec. 5.1.3)  Algorithm B, eps = 0.2, gamma_max = 2.0
+eps is an INPUT (the guarantee); d is the OUTPUT (iso-guarantee degree).
+==================================================================================================================================
+  spectrum    K    eps  dbase      d  Keff  gamma      cert   target    d_0     e_x SC   e_x base       G
+  1D         16    0.2    269    471    16   1.03 7.770e-021.996e-01    481   3.67e-16   3.32e-0290397967902489.3
+  2D         32    0.2    269    471    18   1.03 8.007e-021.996e-01    481   3.04e-03   3.31e-02    10.9
+  3D         16    0.2    269    539     6   1.01 4.443e-021.996e-01    543   1.14e-02   1.96e-02     1.7
   [wrote tables\adaptive.tex]
 
 ====================================================================================================================
 tab:qsvt_results  (Sec. 5.2.1)  QSVT, 1D Poisson, m=4, base=ChebIter, K=N=16, eps_loose=0.5, eps_tight=0.001
 ====================================================================================================================
+  Algorithm B: base d(0.5) = 155, iso-guarantee d = 349 (2.25x), gamma = 1.11, certificate 0.1929 vs base 0.4962
+  equal query cost gives the base d = 377
 
   uniform load   (kappa = 117.63)
   Method                         d          F          e_C          e_x   P_succ      tau          Q
-  \rev{$p_{SC}$, Algorithm~B}   155   1.000000     3.65e-14     3.54e-14   0.5065    153.1      217.8
-  \rev{$p_0$, same degree}     155   0.999748     4.93e-01     4.96e-01   0.4874     78.7      222.0
+  \rev{$p_{SC}$, Algorithm~B}   349   1.000000     7.00e-14     6.74e-14   0.8537    117.9      377.7
+  \rev{$p_0$, same $d\,\tau$}   377   0.999959     7.83e-02     8.03e-02   0.8506    108.6      408.8
   \rev{$p_0$, tight base}      895   1.000000     9.60e-04     9.83e-04   0.5013    153.7     1264.1
-    depth ratio      tight/corrected = 5.77x
-    query-cost ratio tight/corrected = 5.80x
+    query cost: corrected 377.7 vs equal-cost base 408.8 (1.08x)
+    e_x: corrected 6.74e-14 vs equal-cost base 8.03e-02   -> G = 1.19e+12
+    query-cost ratio tight/corrected = 3.35x
 
   delta load   (kappa = 117.63)
   Method                         d          F          e_C          e_x   P_succ      tau          Q
-  \rev{$p_{SC}$, Algorithm~B}   155   1.000000     5.28e-14     4.24e-14   0.0701    153.1      585.4
-  \rev{$p_0$, same degree}     155   0.995655     4.47e-01     4.93e-01   0.0687     78.7      591.3
+  \rev{$p_{SC}$, Algorithm~B}   349   1.000000     9.32e-14     7.90e-14   0.1182    117.9     1015.3
+  \rev{$p_0$, same $d\,\tau$}   377   0.999635     6.12e-02     8.02e-02   0.1182    108.6     1096.4
   \rev{$p_0$, tight base}      895   1.000000     7.30e-04     9.80e-04   0.0694    153.7     3397.8
-    depth ratio      tight/corrected = 5.77x
-    query-cost ratio tight/corrected = 5.80x
+    query cost: corrected 1015.3 vs equal-cost base 1096.4 (1.08x)
+    e_x: corrected 7.90e-14 vs equal-cost base 8.02e-02   -> G = 1.02e+12
+    query-cost ratio tight/corrected = 3.35x
   [wrote tables\qsvt_results.tex]
 
   PROSE CHECK for Sec. 5.2.1:
-    tau: base 78.7 -> corrected 153.1 (gamma = 1.94); tight base 153.7
-    P_succ corrected 0.5065 vs tight base 0.5013
-    depth 5.77x, query cost 5.80x, tight-base e_x = 9.83e-04
-    point load P_succ = 0.0701
+    Algorithm B: d = 349 (2.25x d(0.5) = 155), gamma = 1.11, certificate 0.1929 vs base 0.4962
+    equal-cost base d = 377; d*tau matched to 0.4%
+    realized Q: corrected 377.7 vs equal-cost base 408.8 -- the base's is 1.08x HIGHER, because matching d*tau does not match P_succ and the correction wins on P_succ too
+    e_x uniform: corrected 6.74e-14, equal-cost base 8.03e-02, tight base 9.83e-04
+    P_succ corrected 0.8537 vs tight base 0.5013
+    tight base costs 3.35x the corrected and is LESS accurate
+    point load P_succ = 0.1182
 
 ========================================================================================================
 tab:perturbation  (Sec. 5.2.2)  1D Poisson, m=4, base=ChebIter, K=N=16, eps=0.5, 60 trials, seed=42
 (eta=0 row MUST match the p_SC row of tab:qsvt_results)
 ========================================================================================================
+  Algorithm B degree = 349 (base d(0.5) = 155)
      eta          1-F          e_C          e_x    P_succ    K_eff
-     0.0     0.00e+00     3.65e-14     3.54e-14    0.5065       16
-    0.01     7.24e-06     4.14e-03     5.52e-03    0.5062       16
-     0.1     4.71e-04     4.59e-02     5.41e-02    0.5080   14--16
-     0.2     1.27e-03     6.29e-02     7.54e-02    0.5175   14--16
+     0.0     0.00e+00     7.00e-14     6.74e-14    0.8537       16
+    0.01     3.31e-07     2.18e-03     2.46e-03    0.8538       16
+     0.1     7.18e-06     2.42e-02     2.50e-02    0.8539   14--16
+     0.2     6.76e-06     3.07e-02     3.17e-02    0.8539   14--16
   [wrote tables\perturbation.tex]
 
 ========================================================================================================
@@ -82,16 +102,43 @@ tab:qsvt_2d  (Sec. 5.3.1)  QSVT, 2D Poisson, N1=16, N=256, base=ChebIter, eps=0.
     32     18   269   0.9999530     1.50e-04     6.86e-03   0.6939   [5s]
   [wrote tables\qsvt_2d.tex]
 
-========================================================================================================
-tab:assess  (Sec. 5.3.2)  2D Poisson, N=256, K=32, gamma_max=2.0
-========================================================================================================
-  kappa = 117.63
-     eps      d   Keff         R_K   gamma   d(eps*)       G
-     0.5    155      8         1.9    1.96       ---      <1
-     0.4    185      8         1.6    1.64       ---      <1
-     0.3    221     15         1.5    1.42       ---      <1
-     0.2    269     18    2.40e-14    1.25      2789    22.4
-     0.1    353     18    4.55e-15    1.11      2789    17.6
+======================================================================================================================
+tab:assess  (Sec. 5.3.2)  2D Poisson, N=256, K=32, eps=0.2, gamma_max=2.0
+======================================================================================================================
+  kappa = 117.63, base d(0.2) = 269, base certificate 0.1996
+    mult      d   Keff   gamma        cert   ok    d_0      e_x SC    e_x base       G
+     1.0    269     18    1.25   4.052e+00   no    317    2.35e-01    1.33e-01     0.6
+    1.25    337     18    1.13   3.506e-01   no    367    1.99e-02    8.72e-02     4.4
+     1.4    377     17    1.09   1.910e-01  yes    401    1.26e-02    6.54e-02     5.2
+     1.5    405     18    1.07   1.458e-01  yes    425    6.40e-03    5.32e-02     8.3
+    1.75    471     18    1.03   8.007e-02  yes    481    3.04e-03    3.31e-02    10.9
+     2.0    539     18    1.01   4.431e-02  yes    543    1.74e-03    1.96e-02    11.3
+     2.5    673     18    1.00   1.280e-02  yes    673    7.04e-04    6.48e-03     9.2
   [wrote tables\assess.tex]
 
-Total wall time: 267s
+==============================================================================================================
+tab:inclusion  (Sec. 6)  stiff inclusion rho = 4, fine 17x17, coarse 11x11, K = 8
+==============================================================================================================
+  fine kappa = 483, estimated 509; Gershgorin alpha 6.0% above lambda_max
+  coarse 11x11 = 121 unknowns, K = 8 supplied, error 2.7%
+  target: base certificate at d(0.2) = 0.2039
+     d/d0      d  Keff  gamma      cert  stop   e_x p0 u  e_x pSC u   e_x p0 p  e_x pSC p
+      1.0   1167     8   1.17  5.40e+00        1.435e-01  4.894e-02  1.430e-01  3.723e-01
+      1.1   1285     8   1.13  7.11e-01        1.057e-01  9.783e-03  1.062e-01  3.400e-02
+     1.25   1459     5   1.06  1.91e-01        6.498e-02  8.247e-03  6.475e-02  1.776e-02
+      1.4   1635     8   1.03  1.91e-01        3.868e-02  4.686e-03  4.022e-02  1.132e-02
+      1.5   1751     8   1.01  1.40e-01        2.607e-02  4.186e-03  2.606e-02  6.269e-03
+      1.6   1867     8   1.01  1.91e-01        1.764e-02  3.521e-03  1.898e-02  9.282e-03
+     1.75   2043     8   1.00  5.76e-02   <--  8.251e-03  2.642e-03  8.711e-03  3.818e-03
+      2.0   2335     8   1.00  5.21e-02        1.197e-03  1.716e-03  2.427e-03  2.851e-03
+     2.25   2627     8   1.00  2.48e-02        1.876e-03  9.796e-04  2.367e-03  1.616e-03
+      2.5   2919     8   1.00  2.04e-02        2.232e-03  5.991e-04  2.405e-03  1.040e-03
+      3.0   3501     8   1.00  4.19e-03        1.375e-03  1.621e-04  1.388e-03  2.160e-04
+
+  HALTS at eps = 1.75, d = 2043, K_eff = 8, gamma = 1.00, certificate 0.058 <= 0.204
+    uniform  e_x 8.251e-03 -> 2.642e-03 (3.1x at equal degree)
+    point    e_x 8.711e-03 -> 3.818e-03 (2.3x at equal degree)
+    equal cost: base d = 2043, worst-load e_x 8.711e-03 vs corrected 3.818e-03  ->  G = 2.3
+  [wrote tables\inclusion.tex]
+
+Total wall time: 1321s

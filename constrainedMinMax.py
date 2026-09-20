@@ -1,9 +1,10 @@
 """
 constrainedMinimax.py -- constrained min-max construction of QSVT polynomials.
 
-STATUS 2026-08-28: research prototype. Verified on 2D Poisson (N=256..1024) and on a
-stiff-inclusion operator, at the polynomial level and on a statevector circuit. NOT
-publication-ready; see `caveats()` and `claude/tail-constrained-correction.md`.
+STATUS 2026-09-17: this is the construction of the paper.  `spectral_constraint()` is
+the procedure the paper states: merge at c = 1/2, solve the LP at d = 1.5 d(eps),
+certify.  `constrained_minimax()` is the earlier research driver with a merge sweep
+and the tail variant, kept for the rebuttal diagnostics.  See `caveats()`.
 
 THE PROBLEM
 -----------
@@ -51,21 +52,30 @@ TRAPS (each of these produced a wrong result during development)
    catches a huge sup.  This module enforces ngrid >= 3*(d+1).
 2. The LP's own optimum t* is a LOWER bound on the true sup (finitely many constraints
    is a relaxation).  NEVER quote it as the guarantee.  Quote certify().
-3. The merge scale c is not optional: perturbed eigenvalues split exact degeneracies
-   into unresolvable pairs.  Sweep it and take the BEST certified value, not the first
-   that passes (this module does; an earlier version took the first and produced a
-   non-monotone eta).
-4. Select the merge scale on the residual over ALL supplied eigenvalues, not on t.
-   Selecting on t lets the sweep merge constraints away to make t small: c=4 kept 5 of
-   18 eigenvalues and certified 6.6e-9 while the true residual over the spectrum was
-   1.29.  Report guarantee = max(t, R_all).
+3. The merge is not optional: perturbed eigenvalues split exact degeneracies into
+   pairs closer than the degree resolves.  With no merge (c = 0) and 1% eigenvalue
+   error, 2D Poisson at K = 32 keeps all 32 split values and needs 1.81 d(eps) to
+   certify, against 1.36 d(eps) at c = 1/2.
+4. Do not merge too coarsely either.  c = 1 (one full resolution cell) discards
+   distinct eigenvalues the LP resolves without difficulty -- pairs at 0.1 of a cell
+   are fine -- and leaves them unpinned: on 2D Poisson at K = 32 the accuracy gain at
+   iso-guarantee falls from 248x (c = 0) and 236x (c = 1/2) to 16x (c = 1).
+   c = 1/2 was within a few percent of the best c on every case tested (1D, 2D with
+   0-10% eigenvalue error, 3D), so it is FIXED in spectral_constraint() and no sweep
+   is run.  A sweep that selects on t cheats (c = 4 kept 5 of 18 eigenvalues and
+   certified 6.6e-9 while the true residual over the spectrum was 1.29).
 """
 import numpy as np
 from numpy.polynomial.chebyshev import Chebyshev
 from scipy.optimize import linprog
 
-__all__ = ["constrained_minimax", "certify", "apply_correction",
-           "merge_by_resolution", "caveats"]
+from PolynomialApproximators import certify, _tau
+
+__all__ = ["spectral_constraint", "constrained_minimax", "certify",
+           "apply_correction", "merge_by_resolution", "caveats"]
+
+C_MERGE = 0.5        # merge scale, in units of the resolution pi/(2 n0)
+MU_DEGREE = 1.5      # degree multiplier over the base degree d(eps)
 
 
 # ---------------------------------------------------------------- basis helpers
@@ -105,26 +115,8 @@ def merge_by_resolution(eigenvalues, n0, c=1.0):
     return lam[keep], len(keep)
 
 
-# ---------------------------------------------------------------- certificate
-def certify(p, segments, deg, M=9000):
-    """RIGOROUS upper bound on max |x p(x) - 1| over a union of closed intervals.
-
-    Ehlich-Zeller: for a polynomial of degree D sampled at M > D cosine-spaced points
-    of an interval,  sup <= max_grid / cos(pi D / 2M).  Applied per segment; the union
-    bound is the max.  This is a theorem, not a fine grid, and it is the same
-    inequality QSVTSolvers uses to bound tau.  Cost ~0.04%; tight to 4 figures.
-    """
-    if M <= deg:
-        M = 4 * deg + 1
-    best = 0.0
-    y = np.cos(np.arange(M) * np.pi / (M - 1))
-    for lo, hi in segments:
-        if hi - lo < 1e-14:
-            continue
-        x = 0.5 * (lo + hi) + 0.5 * (hi - lo) * y
-        g = float(np.max(np.abs(x * p(x) - 1.0)))
-        best = max(best, g / np.cos(np.pi * deg / (2 * M)))
-    return best
+# certify() is imported from PolynomialApproximators so that one definition, with
+# the corrected Ehlich-Zeller constant, serves both modules.
 
 
 def apply_correction(p0, dc):
@@ -167,6 +159,48 @@ def _solve_lp(p0, lam, n0, region, ngrid, gamma_max=None, tau0=None,
                   A_eq=A_eq, b_eq=b_eq,
                   bounds=[(None, None)] * n0 + [(0.0, None)], method="highs")
     return (res.x[:n0], float(res.x[-1])) if res.success else (None, None)
+
+
+def spectral_constraint(poly_class, kappa, eigenvalues, epsilon=0.2,
+                        mu=MU_DEGREE, c=C_MERGE, degree=None):
+    """THE PROCEDURE OF THE PAPER.  Spectrally constrained polynomial.
+
+    1. Base degree and guarantee: d0 = d(epsilon); t0 = certificate of p0 at d0.
+    2. Degree: d = mu * d0 (odd), unless `degree` is given.
+    3. Merge the supplied eigenvalues at scale c * pi/(2 n0), n0 = (d+1)/2.
+    4. Solve   min t  s.t.  |r(x)| <= t on a 3(d+1)-point grid of [a,1],
+                            r(lam_k) = 0 at the retained eigenvalues,
+       with r(x) = x p(x) - 1 and p = p_base(d) + sum_j dc_j T_{2j+1}.
+    5. Certify p on [a,1].  certified = (t <= t0).  If not, the caller raises d.
+
+    kappa is that of the NORMALISED operator (a = 1/kappa) and must not be smaller
+    than the true one, or [a,1] does not contain the spectrum.  The supplied
+    eigenvalues may be approximate: errors cost accuracy, never the certificate.
+
+    Returns a dict: p, p0 (base at d), d, d0, mu, a, K, K_eff, t, t0, certified,
+    t_lp (LP optimum, a lower bound, never quote it), gamma = tau(p)/tau(p0),
+    R_ret (residual at retained eigenvalues), dc.
+    """
+    a = 1.0 / kappa
+    d0 = int(poly_class.mindegree(epsilon, a))
+    t0 = certify(poly_class.poly(d0, a), [(a, 1.0)], d0 + 1)
+    d = (int(round(mu * d0)) | 1) if degree is None else (int(degree) | 1)
+
+    p0 = poly_class.poly(d, a)
+    n0 = len(p0.coef[1::2])
+    lam_in = np.clip(np.asarray(eigenvalues, float), a * (1 + 1e-9), 1 - 1e-12)
+    lam, keff = merge_by_resolution(lam_in, n0, c)
+
+    dc, t_lp = _solve_lp(p0, lam, n0, (a, 1.0), 3 * (d + 1))
+    if dc is None:
+        raise RuntimeError(f"spectral_constraint: LP infeasible at d = {d}")
+    p = apply_correction(p0, dc)
+    t = certify(p, [(a, 1.0)], d + 1)
+    return dict(p=p, p0=p0, d=d, d0=d0, mu=d / d0, a=a,
+                K=int(len(lam_in)), K_eff=int(keff),
+                t=float(t), t0=float(t0), certified=bool(t <= t0),
+                t_lp=float(t_lp), gamma=_tau(p) / _tau(p0),
+                R_ret=float(np.max(np.abs(lam * p(lam) - 1.0))), dc=dc)
 
 
 def constrained_minimax(poly_class, kappa, lam_hat, degree, variant="full",
@@ -257,12 +291,15 @@ def caveats():
         "No predictive formula for t: the Gribling reading gives a CEILING kappa*lam_K "
         "of which only 10-14% is realised, because the weight W dominates. Every "
         "operator is an experiment.",
+        "mu = 1.5 is measured, not derived: the smallest certifying multiplier was "
+        "1.23-1.48 on every case tested, and 1.48 at 10% eigenvalue error leaves a "
+        "thin margin. There is no analytic upper bound on eps_K(d).",
+        "The LP grows with d: about 1 s at d = 400 and 70-100 s at d = 1660.",
         "deriv_delta is implemented but UNTESTED.",
         "variant='tail' fails silently if the supplied set is not the K smallest: it "
         "certified 5.0e-5 with a true residual of 0.66 under 15% eigenvalue error.",
-        "The open practical question is how much gain survives at a few percent "
-        "eigenvalue error. Brackets: 0.1% keeps ~200x, 24% keeps only 10-21x and stops "
-        "improving with degree. 4% is untested and decides the case.",
+        "Benefit needs load energy in the supplied modes: on 3D Poisson (K = 16 of "
+        "4096) a random load is less accurate than the base at the same degree.",
         "Where a good classical preconditioner exists, solve the system classically: "
         "PCG with a homogeneous preconditioner solved the test problems in 5-26 "
         "iterations, and computing the K eigenvalues cost 25-213x that.",
